@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlpipe-cli"
-version = "0.2.3"
+version = "0.2.4"
 description = "Production-ready tabular ML automation library and terminal CLI"
 readme = "README.md"
 license = { text = "MIT" }

@@ -4,6 +4,7 @@ Terminal Command Line Interface for MLPipe.
 Built with Typer and Rich to deliver a polished, developer-focused terminal experience.
 """
 
+import difflib
 import json
 from pathlib import Path
 import sys
@@ -19,7 +20,7 @@ from rich.table import Table
 import typer
 
 from mlpipe.artifacts.manager import inspect_run_directory
-from mlpipe.codegen.generator import generate_standalone_code
+from mlpipe.codegen.generator import generate_standalone_code, generate_standalone_notebook
 from mlpipe.core.config import TaskType, TrainingMode
 from mlpipe.core.exceptions import MLPipeError
 from mlpipe.core.pipeline import Pipeline
@@ -95,6 +96,64 @@ def explain_metric(metric: str) -> str:
     return "Standard evaluation metric."
 
 
+def resolve_dataset_path(raw_path: Path) -> Path:
+    """
+    Intelligently resolve dataset paths:
+    1. If file exists, return it directly.
+    2. If directory is passed, find all CSV files and let the user select one interactively.
+    3. If file does not exist, look for close matches (fuzzy typo auto-correction) in parent or current directory.
+    """
+    # 1. Direct file match
+    if raw_path.is_file():
+        return raw_path
+
+    # 2. Directory passed
+    if raw_path.is_dir():
+        csv_files = sorted(list(raw_path.glob("*.csv")) + list(raw_path.glob("*.CSV")))
+        if not csv_files:
+            err_console.print(f"[bold red]No CSV files found in directory:[/bold red] {raw_path}")
+            raise typer.Exit(code=1)
+
+        console.print(f"\n[bold cyan]📁 Directory Provided:[/bold cyan] [bold]{raw_path}[/bold]")
+        console.print(f"Found [bold green]{len(csv_files)}[/bold green] CSV dataset{'s' if len(csv_files) > 1 else ''}:\n")
+        for idx, f in enumerate(csv_files, start=1):
+            size_kb = round(f.stat().st_size / 1024, 1)
+            console.print(f"  [bold yellow][{idx}][/bold yellow] [bold]{f.name}[/bold] [dim]({size_kb} KB)[/dim]")
+
+        choice = Prompt.ask("\n[bold green]Which dataset would you like to use?[/bold green]", default="1")
+        if choice.isdigit() and 1 <= int(choice) <= len(csv_files):
+            chosen = csv_files[int(choice) - 1]
+            console.print(f"[green]{CHECK}[/green] Selected: [bold cyan]{chosen.name}[/bold cyan]\n")
+            return chosen
+        for f in csv_files:
+            if f.name.lower() == choice.strip().lower():
+                return f
+        err_console.print(f"[bold red]Invalid selection '{choice}'.[/bold red]")
+        raise typer.Exit(code=1)
+
+    # 3. File not found — check for typos
+    parent_dir = raw_path.parent if raw_path.parent.is_dir() else Path.cwd()
+    candidate_files = list(parent_dir.glob("*.csv")) + list(parent_dir.glob("*.CSV"))
+    if not candidate_files and parent_dir != Path.cwd():
+        candidate_files = list(Path.cwd().glob("*.csv")) + list(Path.cwd().glob("*.CSV"))
+
+    if candidate_files:
+        cand_names = [f.name for f in candidate_files]
+        matches = difflib.get_close_matches(raw_path.name, cand_names, n=1, cutoff=0.45)
+        if matches:
+            matched_file = next(f for f in candidate_files if f.name == matches[0])
+            console.print(f"\n[yellow]⚠️  File not found:[/yellow] [bold]{raw_path.name}[/bold]")
+            use_match = Confirm.ask(
+                f"💡 [bold green]Did you mean:[/bold green] [bold cyan]{matched_file.name}[/bold cyan]? Use this file?",
+                default=True,
+            )
+            if use_match:
+                return matched_file
+
+    err_console.print(f"\n[bold red]Error:[/bold red] Dataset file '[bold]{raw_path}[/bold]' does not exist.")
+    raise typer.Exit(code=1)
+
+
 app = typer.Typer(
     name="mlpipe",
     help="MLPipe: Production-ready tabular ML automation library and terminal CLI.",
@@ -139,9 +198,6 @@ def profile_cmd(
     dataset_path: Path = typer.Argument(
         ...,
         help="Path to the CSV dataset.",
-        exists=True,
-        dir_okay=False,
-        readable=True,
     ),
     format: str = typer.Option(
         "human",
@@ -152,6 +208,7 @@ def profile_cmd(
 ):
     """Profile a dataset and view structure, data types, missingness, and distributions."""
     try:
+        dataset_path = resolve_dataset_path(dataset_path)
         ds = load_dataset(dataset_path)
         profile = profile_dataset(ds)
 
@@ -226,9 +283,6 @@ def validate_cmd(
     dataset_path: Path = typer.Argument(
         ...,
         help="Path to the CSV dataset.",
-        exists=True,
-        dir_okay=False,
-        readable=True,
     ),
     target: str = typer.Option(
         ...,
@@ -250,6 +304,7 @@ def validate_cmd(
 ):
     """Validate dataset suitability and verify pre-training feasibility."""
     try:
+        dataset_path = resolve_dataset_path(dataset_path)
         ds = load_dataset(dataset_path)
         report = validate_dataset(ds, target_column=target, task_override=task)
 
@@ -302,9 +357,6 @@ def train_cmd(
     dataset_path: Path = typer.Argument(
         ...,
         help="Path to the CSV dataset to train on.",
-        exists=True,
-        dir_okay=False,
-        readable=True,
     ),
     target: str = typer.Option(
         ...,
@@ -349,6 +401,7 @@ def train_cmd(
 ):
     """Train multiple candidate ML models, tune hyperparameters, evaluate, and save artifacts."""
     try:
+        dataset_path = resolve_dataset_path(dataset_path)
         pipeline = Pipeline(
             target=target,
             task=task,
@@ -626,9 +679,6 @@ def split_cmd(
     dataset_path: Path = typer.Argument(
         ...,
         help="Path to the CSV dataset to split.",
-        exists=True,
-        dir_okay=False,
-        readable=True,
     ),
     target: str = typer.Option(
         ...,
@@ -656,6 +706,7 @@ def split_cmd(
 ):
     """Explicitly split a dataset into train.csv and test.csv without data leakage."""
     try:
+        dataset_path = resolve_dataset_path(dataset_path)
         ds = load_dataset(dataset_path)
         if target not in ds.data.columns:
             raise MLPipeError(f"Target column '{target}' not found in dataset columns: {list(ds.data.columns)}")
@@ -726,9 +777,6 @@ def run_cmd(
     dataset_path: Path = typer.Argument(
         ...,
         help="Path to the CSV dataset to analyze and train on.",
-        exists=True,
-        dir_okay=False,
-        readable=True,
     ),
     output: Path = typer.Option(
         Path("./mlpipe_runs"),
@@ -748,6 +796,9 @@ def run_cmd(
     select ML models, evaluate test results, fine-tune parameters, and export reproducible code.
     """
     try:
+        # Resolve dataset path (handles typos & directory browsing)
+        dataset_path = resolve_dataset_path(dataset_path)
+
         console.print(f"\n[bold cyan]MLPipe Guided Studio[/bold cyan] {DASH} [bold]{dataset_path.name}[/bold]\n")
 
         # ── Step 1: Ingest & Inspect Columns ──────────────────────────────────────
@@ -1043,16 +1094,17 @@ def run_cmd(
                 else:
                     console.print("[dim]No parameters changed.[/dim]")
 
-        # ── Step 7: Export Standalone Python Script ───────────────────────────────
-        console.print("\n[bold]Code Generation & Export[/bold]")
+        # ── Step 7: Export Standalone Python Script & Jupyter Notebook ───────────────
+        console.print("\n[bold]Code Generation & Notebook Export[/bold]")
         console.print(RULE * 44)
         console.print(
             "💡 [bold green]Recommendation:[/bold green] [bold cyan]Yes (Recommended)[/bold cyan] — Generates a standalone, "
-            "reproducible Python script (.py) containing EVERY line of code for data cleaning, preprocessing, "
-            "model creation, training, evaluation, explainability, and deployment using standard scikit-learn & pandas with zero external dependencies on mlpipe.\n"
+            "reproducible Python script (.py) formatted with [bold yellow]# %%[/bold yellow] interactive cells ready for [bold cyan]VS Code[/bold cyan] "
+            "AND a native Jupyter Notebook ([bold cyan].ipynb[/bold cyan]) containing EVERY line of code for data cleaning, preprocessing, "
+            "model creation, training, evaluation, explainability, inline plots, and serialization using standard scikit-learn & pandas with zero dependencies on mlpipe.\n"
         )
         want_code = export_code is not None or Confirm.ask(
-            "[bold green]Would you like to get the complete, standalone Python code performed on this dataset?[/bold green]",
+            "[bold green]Would you like to export the complete standalone Python code & Jupyter Notebook?[/bold green]",
             default=True,
         )
 
@@ -1074,20 +1126,38 @@ def run_cmd(
                     random_seed=42,
                 )
 
+                notebook_json = generate_standalone_notebook(
+                    dataset_path=str(dataset_path.resolve()),
+                    target_column=target,
+                    task_type=task_type,
+                    model_name=result.best_model_name,
+                    estimator_params=best_estimator.get_params(),
+                    numeric_columns=num_cols,
+                    categorical_columns=cat_cols,
+                    test_size=split_rec["test_size"],
+                    random_seed=42,
+                )
+
                 if export_code:
                     script_path = export_code
+                    nb_path = export_code.with_suffix(".ipynb")
                 else:
                     console.print("💡 [bold green]Recommended script name:[/bold green] [bold cyan]reproduce_pipeline.py[/bold cyan]")
-                    script_path_str = Prompt.ask("Save script as", default="reproduce_pipeline.py")
+                    script_path_str = Prompt.ask("Save script base name", default="reproduce_pipeline.py")
                     script_path = Path(script_path_str)
+                    nb_path = script_path.with_suffix(".ipynb")
 
                 script_path.parent.mkdir(parents=True, exist_ok=True)
                 script_path.write_text(code, encoding="utf-8")
+                nb_path.write_text(notebook_json, encoding="utf-8")
 
-                # Print complete code right in the terminal
-                console.print(f"\n[green]{CHECK}[/green] Standalone Python script written to [bold cyan]{script_path}[/bold cyan]\n")
+                console.print(f"\n[green]{CHECK}[/green] [bold cyan]VS Code Ready Script:[/bold cyan]    [bold]{script_path.resolve()}[/bold]")
+                console.print(f"  [dim]👉 Structured with '# %%' interactive cells. Open in VS Code to see 'Run Cell' buttons above each block![/dim]")
+                console.print(f"[green]{CHECK}[/green] [bold cyan]Jupyter Notebook:[/bold cyan]        [bold]{nb_path.resolve()}[/bold]")
+                console.print(f"  [dim]👉 Native .ipynb format with Markdown guides and inline plots. Open in JupyterLab, Google Colab, or VS Code![/dim]\n")
+
                 console.print("[bold cyan]══════════════════════════════════════════════════════════════════[/bold cyan]")
-                console.print("[bold cyan]COMPLETE STANDALONE PYTHON CODE (Cleaning, Preprocessing, ML, Tuning, Eval):[/bold cyan]")
+                console.print("[bold cyan]COMPLETE STANDALONE CODE (Cleaning, Preprocessing, ML, Tuning, Eval):[/bold cyan]")
                 console.print("[bold cyan]══════════════════════════════════════════════════════════════════[/bold cyan]")
                 console.print(Syntax(code, "python", theme="monokai", line_numbers=True))
                 console.print(f"\n[dim]Run this script independently on any machine with:[/dim]")
