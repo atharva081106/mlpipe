@@ -24,11 +24,18 @@ class PipelineResult:
     artifacts_dir: Path
     elapsed_time_s: float
     metadata: Dict[str, Any] = field(default_factory=dict)
+    test_preview: List[Dict[str, Any]] = field(default_factory=list)
+    train_path: Optional[Path] = None
+    test_path: Optional[Path] = None
+    test_predictions_path: Optional[Path] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert result to a dictionary representation."""
         data = asdict(self)
-        data["artifacts_dir"] = str(self.artifacts_dir)
+        data["artifacts_dir"] = str(self.artifacts_dir) if self.artifacts_dir else None
+        data["train_path"] = str(self.train_path) if self.train_path else None
+        data["test_path"] = str(self.test_path) if self.test_path else None
+        data["test_predictions_path"] = str(self.test_predictions_path) if self.test_predictions_path else None
         return data
 
     @property
@@ -40,3 +47,4 @@ class PipelineResult:
     def metrics(self) -> Dict[str, Any]:
         """Convenience alias for test metrics."""
         return self.test_metrics
+

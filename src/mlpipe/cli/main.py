@@ -21,7 +21,8 @@ from mlpipe.core.exceptions import MLPipeError
 from mlpipe.core.pipeline import Pipeline
 from mlpipe.data.ingestion import load_dataset
 from mlpipe.data.profiling import profile_dataset
-from mlpipe.data.validation import validate_dataset
+from mlpipe.data.splitting import split_data
+from mlpipe.data.validation import detect_task, validate_dataset
 from mlpipe.version import __version__
 
 # Cross-platform encoding-safe glyphs
@@ -287,6 +288,12 @@ def train_cmd(
         "--verbose",
         help="Enable detailed logging.",
     ),
+    export_splits: Optional[Path] = typer.Option(
+        None,
+        "--export-splits",
+        "-s",
+        help="Optional destination directory to copy train.csv, test.csv, and test_predictions.csv.",
+    ),
 ):
     """Train multiple candidate ML models, tune hyperparameters, evaluate, and save artifacts."""
     try:
@@ -320,6 +327,8 @@ def train_cmd(
                     console.print(f"[green]{CHECK}[/green] Validation passed")
                 elif stage == "task_detection":
                     console.print(f"[green]{CHECK}[/green] {msg}")
+                elif stage == "splitting":
+                    console.print(f"[green]{CHECK}[/green] Data split into Training & Testing sets")
                 elif stage == "preprocessing":
                     console.print("\n[bold]Preprocessing[/bold]")
                     console.print(f"[green]{CHECK}[/green] Numeric features")
@@ -364,12 +373,66 @@ def train_cmd(
             )
             console.print(Panel(panel_content, title="Best Model", border_style="green"))
 
-            console.print(f"\n[green]{CHECK}[/green] Pipeline saved")
-            console.print(f"[green]{CHECK}[/green] Model saved")
-            console.print(f"[green]{CHECK}[/green] Metrics saved")
-            console.print(f"[green]{CHECK}[/green] Run report generated\n")
+            # Hold-Out Test Set Verification Preview (Results displayed in front of the user)
+            if result.test_preview:
+                console.print(f"\n[bold]Hold-Out Test Set Verification Preview[/bold] (First {len(result.test_preview)} rows)")
+                console.print(RULE * 44)
 
-            console.print(f"[bold]Output:[/bold]\n{result.artifacts_dir}\n")
+                test_table = Table(header_style="bold cyan", border_style="dim")
+                test_table.add_column("Row", style="dim", justify="right")
+                test_table.add_column("Sample Features", style="cyan")
+                test_table.add_column(f"Actual ({target})", justify="right", style="bold yellow")
+                test_table.add_column(f"Predicted ({target})", justify="right", style="bold green")
+                test_table.add_column("Evaluation", justify="center")
+
+                for row_data in result.test_preview:
+                    feat_str = ", ".join(f"{k}={v}" for k, v in row_data.get("features", {}).items())
+                    act_val = row_data["actual"]
+                    pred_val = row_data["predicted"]
+
+                    if result.task_type == "classification":
+                        match = row_data.get("match", False)
+                        eval_str = f"[bold green]{CHECK} Match[/bold green]" if match else f"[bold red]{CROSS} Mismatch[/bold red]"
+                        test_table.add_row(f"#{row_data['row_idx']}", feat_str, str(act_val), str(pred_val), eval_str)
+                    else:
+                        err = row_data.get("error", 0.0)
+                        eval_str = f"Diff: {err:,.2f}"
+                        test_table.add_row(
+                            f"#{row_data['row_idx']}",
+                            feat_str,
+                            f"{act_val:,.2f}" if isinstance(act_val, (int, float)) else str(act_val),
+                            f"{pred_val:,.2f}" if isinstance(pred_val, (int, float)) else str(pred_val),
+                            eval_str,
+                        )
+
+                console.print(test_table)
+
+            # Generated Datasets and Artifacts
+            console.print("\n[bold]Generated Datasets & Artifacts[/bold]")
+            console.print(RULE * 44)
+            if result.train_path and result.train_path.exists():
+                console.print(f"[green]{CHECK}[/green] Training dataset:   [bold cyan]{result.train_path.name}[/bold cyan] ({result.metadata.get('train_rows', 0):,} rows)")
+            if result.test_path and result.test_path.exists():
+                console.print(f"[green]{CHECK}[/green] Testing dataset:    [bold cyan]{result.test_path.name}[/bold cyan] ({result.metadata.get('test_rows', 0):,} rows)")
+            if result.test_predictions_path and result.test_predictions_path.exists():
+                console.print(f"[green]{CHECK}[/green] Test predictions:  [bold cyan]{result.test_predictions_path.name}[/bold cyan] (features + actual + predicted)")
+            console.print(f"[green]{CHECK}[/green] Pipeline saved:     [bold cyan]pipeline.joblib[/bold cyan]")
+            console.print(f"[green]{CHECK}[/green] Model saved:        [bold cyan]model.joblib[/bold cyan]")
+            console.print(f"[green]{CHECK}[/green] Metrics saved:      [bold cyan]metrics.json[/bold cyan]")
+            console.print(f"[green]{CHECK}[/green] Run report:         [bold cyan]report.txt[/bold cyan]\n")
+
+            if export_splits:
+                import shutil
+                export_splits.mkdir(parents=True, exist_ok=True)
+                if result.train_path and result.train_path.exists():
+                    shutil.copy(result.train_path, export_splits / "train.csv")
+                if result.test_path and result.test_path.exists():
+                    shutil.copy(result.test_path, export_splits / "test.csv")
+                if result.test_predictions_path and result.test_predictions_path.exists():
+                    shutil.copy(result.test_predictions_path, export_splits / "test_predictions.csv")
+                console.print(f"[green]{CHECK}[/green] Exported splits copied to: [bold]{export_splits}[/bold]\n")
+
+            console.print(f"[bold]Output Directory:[/bold]\n{result.artifacts_dir}\n")
 
         else:
             # JSON format
@@ -480,6 +543,12 @@ def inspect_cmd(
         table.add_row("Seed", str(meta.get("random_seed")))
         table.add_row("Elapsed Time", f"{meta.get('elapsed_time_s', 0):.2f}s")
 
+        if "splits" in meta and meta["splits"].get("train_samples") is not None:
+            sp = meta["splits"]
+            table.add_row("Training Split", f"{sp['train_samples']:,} rows ({sp.get('train_file')})")
+            table.add_row("Testing Split", f"{sp['test_samples']:,} rows ({sp.get('test_file')})")
+            table.add_row("Predictions File", str(sp.get("predictions_file")))
+
         console.print(table)
         console.print()
 
@@ -496,3 +565,103 @@ def inspect_cmd(
     except Exception as e:
         err_console.print(f"[bold red]Unexpected Error:[/bold red] {e}")
         raise typer.Exit(code=1)
+
+
+# ─── 6. Split Command ─────────────────────────────────────────────────────────
+
+@app.command("split")
+def split_cmd(
+    dataset_path: Path = typer.Argument(
+        ...,
+        help="Path to the CSV dataset to split.",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    target: str = typer.Option(
+        ...,
+        "--target",
+        "-t",
+        help="Target column to stratify (for classification) and preserve in splits.",
+    ),
+    test_size: float = typer.Option(
+        0.20,
+        "--test-size",
+        "-s",
+        help="Fraction of data for the holdout test set (default: 0.20).",
+    ),
+    output_dir: Path = typer.Option(
+        Path("./splits"),
+        "--output-dir",
+        "-o",
+        help="Directory to save train.csv and test.csv.",
+    ),
+    seed: int = typer.Option(
+        42,
+        "--seed",
+        help="Random seed for reproducible splitting.",
+    ),
+):
+    """Explicitly split a dataset into train.csv and test.csv without data leakage."""
+    try:
+        ds = load_dataset(dataset_path)
+        if target not in ds.data.columns:
+            raise MLPipeError(f"Target column '{target}' not found in dataset columns: {list(ds.data.columns)}")
+
+        task_type = detect_task(ds.data[target])
+        split_res = split_data(
+            df=ds.data,
+            target_column=target,
+            task_type=task_type,
+            test_size=test_size,
+            random_seed=seed,
+        )
+
+        train_file, test_file = split_res.export(output_dir)
+
+        console.print(f"\n[bold cyan]MLPipe Dataset Split[/bold cyan] {DASH} [bold]{ds.filename}[/bold]\n")
+
+        table = Table(title="Data Splits Summary", header_style="bold cyan", border_style="dim")
+        table.add_column("Set", style="bold")
+        table.add_column("Rows", justify="right")
+        table.add_column("Percentage", justify="right")
+        table.add_column("Stratified", justify="center")
+        table.add_column("Saved Path", style="dim")
+
+        table.add_row(
+            "Training Set",
+            f"{split_res.train_size:,}",
+            f"{100*(1-test_size):.1f}%",
+            f"[green]{CHECK}[/green]" if split_res.is_stratified else DASH,
+            str(train_file.resolve()),
+        )
+        table.add_row(
+            "Testing Set",
+            f"{split_res.test_size:,}",
+            f"{100*test_size:.1f}%",
+            f"[green]{CHECK}[/green]" if split_res.is_stratified else DASH,
+            str(test_file.resolve()),
+        )
+
+        console.print(table)
+
+        # Show preview of test set rows right in front of user
+        console.print(f"\n[bold]Testing Set Preview[/bold] (First 5 hold-out rows)")
+        console.print(RULE * 36)
+        preview_cols = [c for c in split_res.test_df.columns if c != target][:3] + [target]
+        prev_table = Table(header_style="bold magenta", border_style="dim")
+        for c in preview_cols:
+            prev_table.add_column(c, style="bold yellow" if c == target else "white")
+        for _, row in split_res.test_df.head(5).iterrows():
+            prev_table.add_row(*[str(row[c]) for c in preview_cols])
+        console.print(prev_table)
+
+        console.print(f"\n[green]{CHECK}[/green] Datasets successfully exported to [bold]{output_dir}[/bold]\n")
+
+    except MLPipeError as e:
+        err_console.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        err_console.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(code=1)
+

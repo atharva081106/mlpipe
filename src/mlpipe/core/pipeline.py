@@ -240,7 +240,53 @@ class Pipeline:
         _notify("explainability", "Extracting feature importances...")
         feature_importance = extract_feature_importance(best_pipeline)
 
-        # ── 10. Artifact Generation ────────────────────────────────────────
+        # ── 10. Test Set Predictions & Preview ─────────────────────────────
+        _notify("evaluation", "Generating hold-out test set predictions...")
+        y_test_pred = best_pipeline.predict(split_res.X_test)
+
+        test_predictions_df = split_res.X_test.copy()
+        test_predictions_df[f"actual_{self.config.target}"] = split_res.y_test.values
+        test_predictions_df[f"predicted_{self.config.target}"] = y_test_pred
+
+        test_preview = []
+        preview_n = min(10, len(split_res.X_test))
+        candidate_cols = [c for c in split_res.X_test.columns if "id" not in c.lower() and "uuid" not in c.lower()]
+        if not candidate_cols:
+            candidate_cols = list(split_res.X_test.columns)
+        preview_cols = candidate_cols[:3]
+
+        if task_type == "classification":
+            matches = (split_res.y_test.values == y_test_pred)
+            test_predictions_df["match"] = matches
+            for i in range(preview_n):
+                sample_feats = {
+                    col: (round(float(split_res.X_test.iloc[i][col]), 2) if isinstance(split_res.X_test.iloc[i][col], (float, np.floating)) else split_res.X_test.iloc[i][col])
+                    for col in preview_cols
+                }
+                test_preview.append({
+                    "row_idx": int(i + 1),
+                    "actual": split_res.y_test.values[i],
+                    "predicted": y_test_pred[i],
+                    "match": bool(matches[i]),
+                    "features": sample_feats,
+                })
+        else:
+            abs_err = np.abs(split_res.y_test.values - y_test_pred)
+            test_predictions_df["absolute_error"] = np.round(abs_err, 4)
+            for i in range(preview_n):
+                sample_feats = {
+                    col: (round(float(split_res.X_test.iloc[i][col]), 2) if isinstance(split_res.X_test.iloc[i][col], (float, np.floating)) else split_res.X_test.iloc[i][col])
+                    for col in preview_cols
+                }
+                test_preview.append({
+                    "row_idx": int(i + 1),
+                    "actual": float(np.round(split_res.y_test.values[i], 4)),
+                    "predicted": float(np.round(y_test_pred[i], 4)),
+                    "error": float(np.round(abs_err[i], 4)),
+                    "features": sample_feats,
+                })
+
+        # ── 11. Artifact Generation ────────────────────────────────────────
         _notify("artifacts", "Saving run artifacts and pipeline...")
         artifact_mgr = ArtifactManager(base_output_dir=self.config.output_dir)
         run_id = artifact_mgr.generate_run_id()
@@ -262,6 +308,9 @@ class Pipeline:
             feature_importance=feature_importance,
             elapsed_time_s=elapsed_s,
             random_seed=self.config.random_seed,
+            train_df=split_res.train_df,
+            test_df=split_res.test_df,
+            test_predictions_df=test_predictions_df,
         )
 
         self._result = PipelineResult(
@@ -282,7 +331,11 @@ class Pipeline:
                 "random_seed": self.config.random_seed,
                 "train_rows": split_res.train_size,
                 "test_rows": split_res.test_size,
-            }
+            },
+            test_preview=test_preview,
+            train_path=saved_dir / "train.csv",
+            test_path=saved_dir / "test.csv",
+            test_predictions_path=saved_dir / "test_predictions.csv",
         )
 
         _notify("complete", f"Pipeline complete in {elapsed_s}s. Best model: {best_model_name} ({best_cv_score})")

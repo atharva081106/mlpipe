@@ -6,7 +6,8 @@ and random splitting for regression.
 """
 
 from dataclasses import dataclass
-from typing import Tuple
+from pathlib import Path
+from typing import Optional, Tuple, Union
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -27,6 +28,33 @@ class SplitData:
     train_size: int
     test_size: int
     is_stratified: bool
+    target_name: str = "target"
+
+    @property
+    def train_df(self) -> pd.DataFrame:
+        """Combined DataFrame of training features and target."""
+        df = self.X_train.copy()
+        col_name = self.target_name or (self.y_train.name if self.y_train.name else "target")
+        df[col_name] = self.y_train.values
+        return df
+
+    @property
+    def test_df(self) -> pd.DataFrame:
+        """Combined DataFrame of test features and target."""
+        df = self.X_test.copy()
+        col_name = self.target_name or (self.y_test.name if self.y_test.name else "target")
+        df[col_name] = self.y_test.values
+        return df
+
+    def export(self, output_dir: Union[str, Path] = ".") -> Tuple[Path, Path]:
+        """Save train.csv and test.csv to an output directory."""
+        out_dir = Path(output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        train_path = out_dir / "train.csv"
+        test_path = out_dir / "test.csv"
+        self.train_df.to_csv(train_path, index=False)
+        self.test_df.to_csv(test_path, index=False)
+        return train_path, test_path
 
 
 def split_data(
@@ -98,4 +126,5 @@ def split_data(
         train_size=len(X_train),
         test_size=len(X_test),
         is_stratified=is_stratified,
+        target_name=target_column,
     )

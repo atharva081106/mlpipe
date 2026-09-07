@@ -50,10 +50,21 @@ class ArtifactManager:
         feature_importance: List[Dict[str, Any]],
         elapsed_time_s: float,
         random_seed: int = 42,
+        train_df: Optional[pd.DataFrame] = None,
+        test_df: Optional[pd.DataFrame] = None,
+        test_predictions_df: Optional[pd.DataFrame] = None,
     ) -> Path:
         """Save all artifacts for a completed pipeline run."""
         run_dir = self.base_output_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
+
+        # 0. Save data splits if provided
+        if train_df is not None:
+            train_df.to_csv(run_dir / "train.csv", index=False)
+        if test_df is not None:
+            test_df.to_csv(run_dir / "test.csv", index=False)
+        if test_predictions_df is not None:
+            test_predictions_df.to_csv(run_dir / "test_predictions.csv", index=False)
 
         # 1. Save complete pipeline (reusable end-to-end)
         save_joblib(pipeline, run_dir / "pipeline.joblib")
@@ -101,6 +112,13 @@ class ArtifactManager:
             "test_score": test_score,
             "random_seed": random_seed,
             "elapsed_time_s": elapsed_time_s,
+            "splits": {
+                "train_samples": len(train_df) if train_df is not None else None,
+                "test_samples": len(test_df) if test_df is not None else None,
+                "train_file": "train.csv" if train_df is not None else None,
+                "test_file": "test.csv" if test_df is not None else None,
+                "predictions_file": "test_predictions.csv" if test_predictions_df is not None else None,
+            },
         }
         save_json(metadata, run_dir / "metadata.json")
 
@@ -157,6 +175,17 @@ class ArtifactManager:
         for k, v in test_metrics.items():
             if k != "confusion_matrix":
                 lines.append(f"{k:<20}: {v}")
+
+        splits = meta.get("splits", {})
+        if splits and splits.get("train_samples") is not None:
+            lines.extend([
+                f"",
+                f"DATA SPLITS & HOLD-OUT TEST SET",
+                f"--------------------------------------------------",
+                f"Training Samples:   {splits.get('train_samples')} ({splits.get('train_file')})",
+                f"Testing Samples:    {splits.get('test_samples')} ({splits.get('test_file')})",
+                f"Test Predictions:   {splits.get('predictions_file')}",
+            ])
 
         if feature_importance:
             lines.extend([

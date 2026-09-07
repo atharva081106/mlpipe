@@ -32,6 +32,11 @@ class Dataset:
         return self.filepath.name
 
     @property
+    def data(self) -> pd.DataFrame:
+        """Alias for df."""
+        return self.df
+
+    @property
     def memory_mb(self) -> float:
         return round(self.memory_bytes / (1024 * 1024), 2)
 
