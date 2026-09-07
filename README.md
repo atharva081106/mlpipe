@@ -43,12 +43,16 @@ No hardcoded results. No fake training. Real scikit-learn models and metrics com
 
 ## 📦 Installation
 
-Install locally in editable mode:
+Install directly from PyPI from any terminal:
 
 ```bash
-git clone https://github.com/your-org/mlpipe.git
-cd mlpipe
-pip install -e .
+pip install mlpipe-cli
+```
+
+Or install directly from GitHub without cloning:
+
+```bash
+pip install git+https://github.com/atharva081106/mlpipe.git
 ```
 
 Verify the installation:

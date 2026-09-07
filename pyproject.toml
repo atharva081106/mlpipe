@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mlpipe"
+name = "mlpipe-cli"
 version = "0.1.0"
 description = "Production-ready tabular ML automation library and terminal CLI"
 readme = "README.md"
