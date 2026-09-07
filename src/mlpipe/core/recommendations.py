@@ -15,16 +15,33 @@ import pandas as pd
 import numpy as np
 
 
-COMMON_TARGET_KEYWORDS = [
-    "target", "label", "class", "outcome", "churn", "status", "price",
-    "sales", "survived", "y", "revenue", "salary", "default", "rating",
-    "score", "risk", "attrition", "fraud", "deposit", "purchased", "bought",
-    "response", "diagnosis", "quality", "charges", "median_house_value",
-    "tip", "fare", "delay", "approved", "admitted", "converted"
+# High-confidence exact matches for ML target names
+STRONG_TARGET_EXACT = {
+    "target", "label", "class", "outcome", "churn", "status", "survived", "y",
+    "chance_of_admit", "chance_of_admission", "admit", "admission", "admitted",
+    "fraud", "default", "attrition", "converted", "conversion", "approved", "approval",
+    "diagnosis", "disease", "recurrence", "decision", "ground_truth", "prediction",
+    "price", "saleprice", "sale_price", "revenue", "salary", "wage", "income", "profit",
+    "charges", "cost", "fare", "tip", "expenditure", "loss", "g3", "final_grade",
+    "median_house_value", "medv", "quality", "response", "dep_delayed_15min"
+}
+
+# Strong target semantic roots (matched as words or phrases)
+STRONG_TARGET_ROOTS = [
+    "target", "label", "outcome", "churn", "survived", "chance", "admit",
+    "probab", "fraud", "default", "attrition", "convert", "approv", "diagnos",
+    "predict", "price", "revenue", "salary", "wage", "income", "profit", "cost"
 ]
 
+# Non-target identifiers to penalize heavily
 NON_TARGET_KEYWORDS = [
-    "id", "uuid", "guid", "index", "unnamed", "row", "serial", "key", "created_at", "updated_at", "timestamp"
+    "id", "uuid", "guid", "index", "unnamed", "row", "serial", "key",
+    "created_at", "updated_at", "timestamp", "date"
+]
+
+# Common feature keywords that are usually inputs when in the middle of a dataset
+FEATURE_ATTRIBUTE_WORDS = [
+    "rating", "score", "level", "grade", "rank", "type", "category", "code"
 ]
 
 
@@ -41,56 +58,103 @@ def recommend_target_column(df: pd.DataFrame) -> Tuple[str, str]:
     reasons: Dict[str, str] = {}
 
     for idx, col in enumerate(cols):
-        col_lower = str(col).lower().strip()
+        col_str = str(col).strip()
+        col_lower = col_str.lower()
+        col_clean = re.sub(r"[^a-zA-Z0-9]+", "_", col_lower).strip("_")
+        tokens = set(re.findall(r"[a-zA-Z0-9]+", col_lower))
+
         score = 0.0
         reason_parts = []
+        is_last = (idx == len(cols) - 1)
 
-        # Penalize obvious ID columns
-        is_id = any(re.search(rf"\b{k}\b", col_lower) for k in NON_TARGET_KEYWORDS) or col_lower in ["id", "index", "unnamed: 0"]
+        # 1. Penalize obvious ID and metadata columns
+        is_id = (
+            col_clean in NON_TARGET_KEYWORDS
+            or any(k in tokens for k in NON_TARGET_KEYWORDS)
+            or any(re.search(rf"\b{k}\b", col_lower) for k in NON_TARGET_KEYWORDS)
+            or col_lower.startswith("unnamed")
+        )
         if is_id:
-            score -= 50.0
+            score -= 100.0
 
-        # Exact match with standard target names
-        if col_lower in COMMON_TARGET_KEYWORDS:
-            score += 40.0
+        # 2. Check exact matches with standard ML target dictionary
+        if col_clean in STRONG_TARGET_EXACT or col_lower in ["y", "target", "label"]:
+            score += 60.0
             reason_parts.append(f"Standard target name '{col}'")
-        elif any(k in col_lower for k in COMMON_TARGET_KEYWORDS):
-            score += 25.0
-            reason_parts.append("Contains target keyword")
+        else:
+            # Check if any strong target root matches as a token or substring
+            matched_roots = [
+                root for root in STRONG_TARGET_ROOTS
+                if root in col_clean or any(root in t for t in tokens)
+            ]
+            if matched_roots:
+                score += 45.0
+                reason_parts.append(f"Contains target keyword '{matched_roots[0]}'")
 
-        # Position heuristic: Last column is conventional ML target
-        if idx == len(cols) - 1:
-            score += 15.0
-            reason_parts.append("Conventional position (last column in dataset)")
-        elif idx == 0 and not is_id:
-            score += 2.0
+        # 3. Position heuristic: In 95%+ of ML datasets, the final column is the target
+        if is_last:
+            score += 35.0
+            reason_parts.append("Conventional position (final column in dataset)")
+        elif idx == len(cols) - 2 and not is_id:
+            score += 5.0
 
-        # Target feasibility heuristics
+        # 4. Target data feasibility and distribution heuristics
         series = df[col].dropna()
         n_unique = series.nunique()
         n_total = len(series)
 
         if n_total > 0:
-            # Check for binary classification target
-            if n_unique == 2:
-                score += 20.0
-                reason_parts.append("Binary outcome (ideal for classification)")
-            # Check for multiclass target (3 to 15 unique values and non-float or integer)
-            elif 3 <= n_unique <= 15 and (series.dtype == "object" or series.dtype.name == "category" or pd.api.types.is_integer_dtype(series)):
-                score += 12.0
-                reason_parts.append(f"Categorical outcome with {n_unique} classes")
-            # Check for continuous target (float or wide-range numeric)
-            elif pd.api.types.is_numeric_dtype(series) and n_unique > 20 and not is_id:
-                score += 10.0
-                reason_parts.append("Continuous numerical target (ideal for regression)")
+            # Check for continuous probability score (e.g. Chance_of_Admit: float in [0, 1] with > 10 unique values)
+            is_prob = False
+            if pd.api.types.is_float_dtype(series) and n_unique > 10:
+                s_min, s_max = series.min(), series.max()
+                if 0.0 <= s_min and s_max <= 1.0:
+                    is_prob = True
+                    score += 30.0
+                    reason_parts.append("Continuous probability outcome in range [0, 1]")
 
-            # Check missingness: heavy missingness is bad for a target
+            # Check for binary classification target (e.g. 0/1, True/False, Yes/No, Churn)
+            if n_unique == 2 and not is_id:
+                if is_last or any(root in col_clean for root in STRONG_TARGET_ROOTS):
+                    score += 25.0
+                    reason_parts.append("Binary outcome (ideal for classification)")
+                else:
+                    # Binary features in the middle (like Gender, Research: Yes/No) are likely inputs
+                    score += 5.0
+
+            # Check for multiclass target (3 to 15 unique values)
+            elif 3 <= n_unique <= 15 and (series.dtype == "object" or series.dtype.name == "category" or pd.api.types.is_integer_dtype(series)):
+                if is_last or any(root in col_clean for root in STRONG_TARGET_ROOTS):
+                    score += 20.0
+                    reason_parts.append(f"Categorical outcome with {n_unique} classes")
+                else:
+                    # Categorical feature in middle of dataset
+                    score += 5.0
+
+            # Check for continuous regression target (wide numeric range)
+            elif pd.api.types.is_numeric_dtype(series) and n_unique > 20 and not is_id and not is_prob:
+                if is_last:
+                    score += 20.0
+                    reason_parts.append("Continuous numerical target (ideal for regression)")
+                else:
+                    score += 5.0
+
+            # Penalize intermediate feature attributes (like University_Rating, GRE_Score, TOEFL_Score)
+            if not is_last and col_clean not in STRONG_TARGET_EXACT:
+                if any(w in tokens for w in FEATURE_ATTRIBUTE_WORDS):
+                    score -= 20.0
+
+            # Penalize unique identifiers / text columns with 100% unique values
+            if n_unique == n_total and n_total > 10:
+                score -= 80.0
+
+            # Heavy missingness penalty (bad candidate for target)
             missing_ratio = df[col].isnull().sum() / len(df)
             if missing_ratio > 0.3:
-                score -= 30.0
+                score -= 40.0
 
         scores[col] = score
-        reasons[col] = "; ".join(reason_parts) if reason_parts else "Candidate column"
+        reasons[col] = "; ".join(reason_parts) if reason_parts else "Candidate feature"
 
     # Pick the highest scoring column
     best_col = max(cols, key=lambda c: scores[c])

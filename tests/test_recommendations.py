@@ -79,3 +79,22 @@ def test_recommend_hyperparameter_overrides_hgb():
     assert "learning_rate" in recs
     assert recs["learning_rate"]["recommended"] == 0.05
     assert recs["max_iter"]["recommended"] == 150
+
+
+def test_recommend_target_graduate_admissions():
+    # Exact structure from user's screenshot
+    df = pd.DataFrame({
+        "Serial_No.": [1, 2, 3, 4, 5],
+        "GRE_Score": [337.0, 324.0, 316.0, 322.0, 314.0],
+        "TOEFL_Score": [118.0, 107.0, 104.0, 110.0, 103.0],
+        "University_Rating": [4, 3, 2, 3, 2],
+        "SOP": [4.5, 4.0, 3.0, 3.5, 2.0],
+        "LOR": [4.5, 3.5, 2.5, 2.5, 3.0],
+        "CGPA": [9.65, 8.87, 8.0, 8.67, 8.21],
+        "Research": ["Yes", "No", "No", "Yes", "No"],
+        "Chance_of_Admit": [0.92, 0.76, 0.72, 0.80, 0.65],
+    })
+    col, reason = recommend_target_column(df)
+    assert col == "Chance_of_Admit"
+    assert "admit" in reason.lower() or "chance" in reason.lower() or "probability" in reason.lower()
+
