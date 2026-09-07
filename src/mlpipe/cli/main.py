@@ -7,7 +7,7 @@ Built with Typer and Rich to deliver a polished, developer-focused terminal expe
 import json
 from pathlib import Path
 import sys
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -23,6 +23,12 @@ from mlpipe.codegen.generator import generate_standalone_code
 from mlpipe.core.config import TaskType, TrainingMode
 from mlpipe.core.exceptions import MLPipeError
 from mlpipe.core.pipeline import Pipeline
+from mlpipe.core.recommendations import (
+    recommend_hyperparameter_overrides,
+    recommend_models_for_task,
+    recommend_split_strategy,
+    recommend_target_column,
+)
 from mlpipe.data.eda import perform_eda
 from mlpipe.data.ingestion import load_dataset
 from mlpipe.data.profiling import profile_dataset
@@ -48,6 +54,29 @@ DASH = "—" if _USE_UNICODE else "-"
 ARROW = "→" if _USE_UNICODE else "->"
 BULLET = "•" if _USE_UNICODE else "*"
 RULE = "─" if _USE_UNICODE else "-"
+
+
+def _parse_param_override(val_str: str, original_val: Any = None) -> Any:
+    val_clean = val_str.strip()
+    if val_clean.lower() in ["none", "null"]:
+        return None
+    if val_clean.lower() == "true":
+        return True
+    if val_clean.lower() == "false":
+        return False
+    try:
+        val_int = int(val_clean)
+        if isinstance(original_val, (float, np.floating)):
+            return float(val_int)
+        return val_int
+    except ValueError:
+        pass
+    try:
+        return float(val_clean)
+    except ValueError:
+        pass
+    return val_clean
+
 
 app = typer.Typer(
     name="mlpipe",
@@ -734,9 +763,19 @@ def run_cmd(
         console.print(col_table)
 
         # ── Step 2: Choose Target Factor to Predict ───────────────────────────────
+        rec_target, rec_reason = recommend_target_column(ds.df)
+        rec_target_idx = cols.index(rec_target) + 1
+
+        console.print(Panel(
+            f"💡 [bold green]Best Recommendation:[/bold green] Column [[bold yellow]{rec_target_idx}[/bold yellow]] [bold cyan]'{rec_target}'[/bold cyan]\n"
+            f"[dim]Rationale: {rec_reason}[/dim]",
+            title="Recommended Target Factor",
+            border_style="green",
+        ))
+
         target_choice = Prompt.ask(
-            "\n[bold green]Which factor / column do you want to predict?[/bold green] (enter number or name)",
-            default=str(len(cols)),
+            "\n[bold green]Which factor / column do you want to predict?[/bold green] (enter number or name, press Enter for recommended)",
+            default=str(rec_target_idx),
         )
 
         target = None
@@ -783,21 +822,40 @@ def run_cmd(
                 corr_table.add_row(c["feature"], str(c["correlation"]))
             console.print(corr_table)
 
-        split_data_res = split_data(ds.df, target, task_type, test_size=0.20)
-        console.print(f"\n[green]{CHECK}[/green] Data Split: [bold]{split_data_res.train_size:,}[/bold] train rows / [bold]{split_data_res.test_size:,}[/bold] test rows (80% / 20%)")
+        split_rec = recommend_split_strategy(len(ds.df), task_type)
+        console.print(f"\n💡 [bold green]Recommended Split Strategy:[/bold green] {split_rec['explanation']}")
+        console.print(f"   [dim]{split_rec['stratification_note']}[/dim]")
+
+        split_data_res = split_data(ds.df, target, task_type, test_size=split_rec["test_size"])
+        console.print(f"[green]{CHECK}[/green] Data Split Applied: [bold]{split_data_res.train_size:,}[/bold] train rows / [bold]{split_data_res.test_size:,}[/bold] test rows ({int(100*(1-split_rec['test_size']))}% / {int(100*split_rec['test_size'])}%)")
 
         # ── Step 4: Model Choice (Single or Multiple) ─────────────────────────────
         candidates = get_candidates_for_task(task_type, mode="balanced")
+        cand_names = [c.name for c in candidates]
+        rec_models = recommend_models_for_task(task_type, len(ds.df), cand_names)
+
         console.print(f"\n[bold]Select Machine Learning Models to Train[/bold]")
         console.print(RULE * 44)
 
         for idx, cand in enumerate(candidates, start=1):
+            note = rec_models["candidate_notes"].get(cand.name, "")
             console.print(f"  [bold yellow][{idx}][/bold yellow] [bold]{cand.name}[/bold]")
-        console.print(f"  [bold yellow][A][/bold yellow] [bold]All Models[/bold] (Train & compare all candidates)")
+            if note:
+                console.print(f"      [dim]{note}[/dim]")
+
+        console.print(f"  [bold yellow][A][/bold yellow] [bold]All Models[/bold] [green]⭐ (Recommended Benchmark)[/green]")
+        console.print(f"      [dim]Trains, tunes, and compares all candidates with 5-fold CV to empirically crown the best model.[/dim]")
+
+        console.print(Panel(
+            f"💡 [bold green]Best Recommendation:[/bold green] [bold cyan]Option [A] (All Models)[/bold cyan]\n"
+            f"[dim]{rec_models['all_recommendation']}[/dim]",
+            title="Model Selection Recommendation",
+            border_style="cyan",
+        ))
 
         model_choice = Prompt.ask(
-            "\n[bold green]Which models would you like to train?[/bold green] (enter numbers e.g. 1, 2 or 'A' for all)",
-            default="A",
+            "\n[bold green]Which models would you like to train?[/bold green] (enter numbers e.g. 1, 2 or press Enter for recommended 'A')",
+            default=rec_models["recommended_choice"],
         )
 
         selected_model_names = None
@@ -897,6 +955,10 @@ def run_cmd(
         # ── Step 6: Interactive Parameter Fine-Tuning ─────────────────────────────
         console.print("\n[bold]Fine-Tuning Options[/bold]")
         console.print(RULE * 44)
+        console.print(
+            "💡 [bold green]Recommendation:[/bold green] [dim]Automated 5-fold CV hyperparameter search has already discovered "
+            "an optimal configuration. Fine-tuning is optional for testing custom parameter ranges or constraints.[/dim]\n"
+        )
         do_finetune = Confirm.ask(
             f"[bold green]Would you like to fine-tune the winning model ({result.best_model_name}) with custom parameters?[/bold green]",
             default=False,
@@ -906,27 +968,25 @@ def run_cmd(
             best_estimator = pipe._fitted_pipeline.named_steps.get("estimator")
             if best_estimator:
                 current_params = best_estimator.get_params()
+                hp_recs = recommend_hyperparameter_overrides(result.best_model_name, current_params)
                 tuneable_keys = [k for k in ["n_estimators", "max_depth", "learning_rate", "C", "min_samples_split", "n_neighbors", "alpha"] if k in current_params]
 
-                console.print(f"\nCurrent key parameters for [bold]{result.best_model_name}[/bold]:")
+                console.print(f"\nCurrent parameters and [bold green]Recommended Overrides[/bold green] for [bold]{result.best_model_name}[/bold]:")
                 for k in tuneable_keys:
-                    console.print(f"  {BULLET} {k} = {current_params[k]}")
+                    if k in hp_recs:
+                        rec_info = hp_recs[k]
+                        console.print(f"  {BULLET} [bold]{k}[/bold]: Current = [yellow]{rec_info['current']}[/yellow] | 💡 [bold green]Recommended = {rec_info['recommended']}[/bold green] [dim]({rec_info['rationale']})[/dim]")
+                    else:
+                        console.print(f"  {BULLET} [bold]{k}[/bold]: Current = [yellow]{current_params[k]}[/yellow]")
 
                 param_overrides = {}
-                console.print("\nEnter new parameter values (or press Enter to keep current):")
+                console.print("\nEnter new parameter values (or press Enter to accept recommended / current):")
                 for k in tuneable_keys:
-                    val_input = Prompt.ask(f"  {k}", default=str(current_params[k]))
-                    if val_input.strip() != str(current_params[k]):
-                        cur_type = type(current_params[k])
-                        try:
-                            if cur_type is int:
-                                param_overrides[k] = int(val_input)
-                            elif cur_type is float:
-                                param_overrides[k] = float(val_input)
-                            else:
-                                param_overrides[k] = val_input
-                        except ValueError:
-                            param_overrides[k] = val_input
+                    rec_val = hp_recs[k]["recommended"] if k in hp_recs else current_params[k]
+                    val_input = Prompt.ask(f"  {k}", default=str(rec_val))
+                    parsed_val = _parse_param_override(val_input, current_params[k])
+                    if parsed_val != current_params[k]:
+                        param_overrides[k] = parsed_val
 
                 if param_overrides:
                     console.print(f"\n[cyan]Retuning with parameters: {param_overrides}...[/cyan]")
@@ -951,6 +1011,10 @@ def run_cmd(
         # ── Step 7: Export Standalone Python Script ───────────────────────────────
         console.print("\n[bold]Code Generation & Export[/bold]")
         console.print(RULE * 44)
+        console.print(
+            "💡 [bold green]Recommendation:[/bold green] [bold cyan]Yes (Recommended)[/bold cyan] — Generates a standalone, "
+            "reproducible Python script (.py) using standard scikit-learn & pandas with zero external dependencies on mlpipe.\n"
+        )
         want_code = export_code is not None or Confirm.ask(
             "[bold green]Would you like to get the complete, standalone Python code performed on this dataset?[/bold green]",
             default=True,
@@ -970,13 +1034,14 @@ def run_cmd(
                     estimator_params=best_estimator.get_params(),
                     numeric_columns=num_cols,
                     categorical_columns=cat_cols,
-                    test_size=0.20,
+                    test_size=split_rec["test_size"],
                     random_seed=42,
                 )
 
                 if export_code:
                     script_path = export_code
                 else:
+                    console.print("💡 [bold green]Recommended script name:[/bold green] [bold cyan]reproduce_pipeline.py[/bold cyan]")
                     script_path_str = Prompt.ask("Save script as", default="reproduce_pipeline.py")
                     script_path = Path(script_path_str)
 

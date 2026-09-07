@@ -75,13 +75,12 @@ mlpipe run demo_data/customer_churn.csv
 
 MLPipe interactively guides you through:
 1. **CSV Analysis & Structure**: Inspects columns, missingness, and data types.
-2. **Target Selection**: Pick which factor to predict by typing its number or name.
-3. **Automated EDA**: View class balance/target statistics and top feature correlations.
-4. **Data Splitting**: Generates stratified `train.csv` (80%) and `test.csv` (20%).
-5. **Model Choice**: Select which ML models to train (single, multiple, or all).
-6. **Live Evaluation**: Displays leaderboard, best model panel, and a hold-out test verification preview.
-7. **Fine-Tuning**: Interactively adjust hyperparameters and see instant before/after test score comparisons.
-8. **Code Export**: Exports a clean, standalone Python script reproducing the full pipeline independently.
+2. **Target Selection with Smart Recommendations**: Automatically detects and recommends the most likely target column with clear rationale; hit Enter to accept.
+3. **Automated EDA & Split Strategy**: View class balance/target statistics, feature correlations, and recommended split ratios.
+4. **Model Choice & AI Suggestions**: Candidate models marked with recommendations and explanations; choose individual models or accept recommended benchmark [A] (All Models).
+5. **Live Evaluation**: Displays leaderboard, best model panel, and a hold-out test verification preview with sample ground truth comparisons.
+6. **Fine-Tuning with Guided Parameter Overrides**: Displays recommended parameter values and rationale for the champion model; compares before/after test scores.
+7. **Standalone Code Export**: Exports a clean, reproducible Python script using pure scikit-learn & pandas with zero dependency on `mlpipe`.
 
 ---
 

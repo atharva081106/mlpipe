@@ -14,10 +14,13 @@ def test_cli_help():
     assert "MLPipe: Production-ready tabular ML automation" in res.output
 
 
+from mlpipe.version import __version__
+
+
 def test_cli_version():
     res = runner.invoke(app, ["version"])
     assert res.exit_code == 0
-    assert "MLPipe v0.1.0" in res.output
+    assert f"MLPipe v{__version__}" in res.output
 
 
 def test_cli_profile_human(sample_csv_file: Path):

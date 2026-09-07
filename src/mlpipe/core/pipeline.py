@@ -494,7 +494,6 @@ class Pipeline:
             X_test=self._split_res.X_test,
             y_test=self._split_res.y_test,
             task_type=self._result.task_type,
-            primary_metric=self._result.primary_metric,
         )
         new_test_score = test_metrics.get(self._result.primary_metric, 0.0)
 
