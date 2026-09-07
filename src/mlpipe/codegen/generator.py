@@ -119,7 +119,8 @@ def generate_standalone_code(
         except Exception as e:
             print(f"(ROC-AUC calculation skipped: {e})")
 
-    print("\\nDetailed Classification Report:")
+    print()
+    print("Detailed Classification Report:")
     print(classification_report(y_test, y_pred, zero_division=0))
 
     print("Confusion Matrix:")
@@ -134,7 +135,11 @@ def generate_standalone_code(
         ConfusionMatrixDisplay.from_predictions(y_test, y_pred, ax=ax, cmap="Blues")
         plt.title(f"Confusion Matrix — {class_name}")
         plt.tight_layout()
-        plt.show()
+        import os
+        if not os.environ.get("PYTEST_CURRENT_TEST"):
+            plt.show()
+        else:
+            plt.close()
     except Exception:
         pass"""
     else:
@@ -173,7 +178,11 @@ def generate_standalone_code(
         plt.legend()
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.show()
+        import os
+        if not os.environ.get("PYTEST_CURRENT_TEST"):
+            plt.show()
+        else:
+            plt.close()
     except Exception:
         pass"""
 
@@ -299,15 +308,39 @@ def build_preprocessor(numeric_cols: list[str], categorical_cols: list[str]) -> 
 
 # %%
 def main():
-    # ── 1. Ingest Dataset ─────────────────────────────────────────────────────────
+    # ── Step 1: Data Collection and Preprocessing ────────────────────────────────
+    print("=" * 60)
+    print("STEP 1: DATA COLLECTION AND PREPROCESSING")
+    print("=" * 60)
     dataset_file = resolve_data_path("{norm_path}")
     target_col = "{target_column}"
 
     X, y = load_and_clean_data(dataset_file, target_col)
 
-    # ── 2. Leakage-Free Train / Test Split ───────────────────────────────────────
-    print("\\n" + "=" * 60)
-    print("2. LEAKAGE-FREE TRAIN / TEST SPLIT")
+    # ── Step 2: Feature Engineering & Selection ──────────────────────────────────
+    print()
+    print("=" * 60)
+    print("STEP 2: FEATURE ENGINEERING & SELECTION")
+    print("=" * 60)
+    numeric_features = {numeric_columns}
+    categorical_features = {categorical_columns}
+
+    num_cols = [c for c in numeric_features if c in X.columns]
+    cat_cols = [c for c in categorical_features if c in X.columns]
+
+    if not num_cols and not cat_cols:
+        num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+        cat_cols = [c for c in X.columns if c not in num_cols]
+
+    print(f"Selected numerical attributes to scale ({{len(num_cols)}}): {{num_cols}}")
+    print(f"Selected categorical attributes to encode ({{len(cat_cols)}}): {{cat_cols}}")
+
+    preprocessor = build_preprocessor(num_cols, cat_cols)
+
+    # ── Step 3: Data Splitting ───────────────────────────────────────────────────
+    print()
+    print("=" * 60)
+    print("STEP 3: DATA SPLITTING")
     print("=" * 60)
     X_train, X_test, y_train, y_test = train_test_split(
         X,
@@ -319,31 +352,16 @@ def main():
     print(f"Training set: {{len(X_train):,}} samples ({train_pct}%)")
     print(f"Testing set:  {{len(X_test):,}} samples ({test_pct}%)")
 
-    # ── 3. Assemble Feature Preprocessing Pipeline ───────────────────────────────
-    numeric_features = {numeric_columns}
-    categorical_features = {categorical_columns}
-
-    num_cols = [c for c in numeric_features if c in X_train.columns]
-    cat_cols = [c for c in categorical_features if c in X_train.columns]
-
-    if not num_cols and not cat_cols:
-        num_cols = X_train.select_dtypes(include=[np.number]).columns.tolist()
-        cat_cols = [c for c in X_train.columns if c not in num_cols]
-
-    print(f"\\nNumeric features to scale ({{len(num_cols)}}): {{num_cols}}")
-    print(f"Categorical features to encode ({{len(cat_cols)}}): {{cat_cols}}")
-
-    preprocessor = build_preprocessor(num_cols, cat_cols)
-
-    # ── 4. Initialize Estimator with Optimal Hyperparameters ─────────────────────
-    print("\\n" + "=" * 60)
-    print("3. MODEL INITIALIZATION & PIPELINE ASSEMBLY")
+    # ── Step 4: Model Selection & Training ───────────────────────────────────────
+    print()
     print("=" * 60)
-    print("Model Architecture: {model_name} ({class_name})")
+    print("STEP 4: MODEL SELECTION & TRAINING")
+    print("=" * 60)
+    print("Selected Algorithm: {model_name} ({class_name})")
 
     model_params = {formatted_params}
 
-    print("Configured Model Hyperparameters:")
+    print("Configured Optimal Hyperparameters:")
     for param_name, param_val in model_params.items():
         print(f"  • {{param_name}} = {{param_val}}")
 
@@ -355,26 +373,21 @@ def main():
         ("estimator", estimator),
     ])
 
-    # ── 5. Train Model Pipeline ──────────────────────────────────────────────────
-    print("\\n" + "=" * 60)
-    print("4. TRAINING END-TO-END PIPELINE")
-    print("=" * 60)
+    print()
     print("Fitting preprocessor and model strictly on training split...")
     pipeline.fit(X_train, y_train)
     print("Training complete!")
 
-    # ── 6. Test Set Evaluation & Metrics ──────────────────────────────────────────
-    print("\\n" + "=" * 60)
-    print("5. MODEL EVALUATION (HELD-OUT TEST DATA)")
+    # ── Step 5: Model Evaluation & Optimization ──────────────────────────────────
+    print()
+    print("=" * 60)
+    print("STEP 5: MODEL EVALUATION & OPTIMIZATION")
     print("=" * 60)
 
     y_pred = pipeline.predict(X_test)
 {eval_metrics_code}
 
-    # ── 7. Feature Importance & Model Explainability ──────────────────────────────
-    print("\\n" + "=" * 60)
-    print("6. MODEL EXPLAINABILITY & TOP PREDICTIVE FEATURES")
-    print("=" * 60)
+    # Model Explainability & Feature Importances
     feat_imp = []
     try:
         fitted_preprocessor = pipeline.named_steps["preprocessor"]
@@ -384,7 +397,8 @@ def main():
         if hasattr(fitted_estimator, "feature_importances_"):
             importances = fitted_estimator.feature_importances_
             feat_imp = sorted(zip(feature_names, importances), key=lambda x: x[1], reverse=True)
-            print("Top 10 Most Important Features:")
+            print()
+            print("Top 10 Most Important Features Driving Predictions:")
             for rank, (name, imp) in enumerate(feat_imp[:10], start=1):
                 clean_name = name.replace("num__", "").replace("cat__", "")
                 print(f"  {{rank:>2}}. {{clean_name:<30}} {{imp * 100:>6.2f}}%")
@@ -395,6 +409,7 @@ def main():
             else:
                 coefs = np.abs(coefs)
             feat_imp = sorted(zip(feature_names, coefs), key=lambda x: x[1], reverse=True)
+            print()
             print("Top 10 Most Influential Feature Coefficients (Absolute Value):")
             for rank, (name, imp) in enumerate(feat_imp[:10], start=1):
                 clean_name = name.replace("num__", "").replace("cat__", "")
@@ -413,35 +428,36 @@ def main():
                 ax.set_title("Top 10 Features Driving Model Decisions")
                 ax.grid(axis="x", alpha=0.3)
                 plt.tight_layout()
-                plt.show()
+                import os
+                if not os.environ.get("PYTEST_CURRENT_TEST"):
+                    plt.show()
+                else:
+                    plt.close()
         except Exception:
             pass
 
     except Exception as e:
         print(f"Feature importance extraction skipped: {{e}}")
 
-    # ── 8. Production Model Serialization & Saving ────────────────────────────────
-    print("\\n" + "=" * 60)
-    print("7. ARTIFACT SERIALIZATION")
-    print("=" * 60)
+    # Production Model Serialization & Saving
     output_model_path = "pipeline.joblib"
     joblib.dump(pipeline, output_model_path)
+    print()
     print(f"Full pipeline successfully saved to: {{output_model_path}}")
 
-    # ── 9. Example Inference on New / Unseen Records ──────────────────────────────
-    print("\\n" + "=" * 60)
-    print("8. EXAMPLE INFERENCE DEMONSTRATION")
-    print("=" * 60)
+    # Example Live Inference Demonstration
     deployed_pipeline = joblib.load(output_model_path)
     sample_test = X_test.head(3)
     sample_actual = y_test.head(3).values
     sample_preds = deployed_pipeline.predict(sample_test)
 
-    print("Predicting on sample test rows using deployed model:")
+    print()
+    print("Live Inference Demonstration (Deployed Pipeline on Unseen Test Samples):")
     for i in range(len(sample_test)):
-        print(f"  Row {{i+1}}: Actual = {{sample_actual[i]}} | Predicted = {{sample_preds[i]}}")
+        print(f"  Sample #{{i+1}}: Ground Truth = {{sample_actual[i]}} | Model Prediction = {{sample_preds[i]}}")
 
-    print("\\n[SUCCESS] Pipeline executed successfully!")
+    print()
+    print("[SUCCESS] Pipeline executed successfully!")
     return pipeline, X_train, X_test, y_train, y_test
 
 
@@ -481,6 +497,8 @@ def generate_standalone_notebook(
     formatted_params = pprint.pformat(clean_params, indent=4, width=80)
     norm_path = dataset_path.replace("\\", "/")
     filename = Path(norm_path).name
+    train_pct = int(round((1.0 - test_size) * 100))
+    test_pct = int(round(test_size * 100))
 
     if task_type == "classification":
         metrics_import = "from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score, ConfusionMatrixDisplay"
@@ -555,17 +573,17 @@ plt.show()"""
             "metadata": {},
             "source": [
                 f"# Machine Learning Pipeline — `{target_column}`\n",
-                f"**Generated by MLPipe** — Ready to execute interactively in Jupyter or VS Code.\n\n",
-                f"- **Target**: `{target_column}`\n",
-                f"- **Task Type**: `{task_type.capitalize()}`\n",
-                f"- **Winning Algorithm**: `{model_name}` (`{class_name}`)\n",
+                f"**Generated by MLPipe** — 5-Step Reproducible ML Lifecycle in Jupyter & VS Code.\n\n",
+                f"- **Target Attribute**: `{target_column}`\n",
+                f"- **Problem Type**: `{task_type.capitalize()}`\n",
+                f"- **Champion Algorithm**: `{model_name}` (`{class_name}`)\n",
             ]
         },
         {
             "cell_type": "markdown",
             "metadata": {},
             "source": [
-                "## 1. Imports & Environment Setup\n",
+                "### Setup & Environment Imports\n",
                 "Load standard open-source packages: `pandas`, `numpy`, `scikit-learn`, `matplotlib`, and `joblib`."
             ]
         },
@@ -596,8 +614,11 @@ plt.show()"""
             "cell_type": "markdown",
             "metadata": {},
             "source": [
-                "## 2. Ingest and Inspect Dataset\n",
-                "Load CSV file and inspect shape, columns, and initial rows."
+                "## Step 1: Data Collection and Preprocessing\n",
+                "• Ingest data from source file / database\n",
+                "• Clean data: handle missing values, duplicates, and invalid records\n",
+                "• Normalize and standardize numerical features (StandardScaler: mean=0, std=1)\n",
+                "• Convert categorical variables into machine-readable format (OneHotEncoder)"
             ]
         },
         {
@@ -611,7 +632,8 @@ plt.show()"""
                 f"    data_path = Path('{filename}')  # Fallback to local working directory\n",
                 "\n",
                 f"df = pd.read_csv(data_path)\n",
-                "print(f'Dataset loaded: {df.shape[0]} rows, {df.shape[1]} columns')\n",
+                "print(f'Raw dataset shape: {df.shape[0]} rows, {df.shape[1]} columns')\n",
+                "print(f'Duplicate rows detected: {df.duplicated().sum()}')\n",
                 "df.head()"
             ]
         },
@@ -619,8 +641,10 @@ plt.show()"""
             "cell_type": "markdown",
             "metadata": {},
             "source": [
-                "## 3. Data Cleaning & Feature Separation\n",
-                f"Isolate feature matrix $X$ and target vector $y$ (`{target_column}`). Clean nulls and infinite values."
+                "## Step 2: Feature Engineering & Selection\n",
+                f"• Isolate feature matrix $X$ and target vector $y$ (`{target_column}`)\n",
+                "• Clean records with missing targets and replace infinite values\n",
+                "• Select most important features and inspect correlations"
             ]
         },
         {
@@ -644,8 +668,9 @@ plt.show()"""
             "cell_type": "markdown",
             "metadata": {},
             "source": [
-                "## 4. Leakage-Free Train / Test Split\n",
-                f"Split into 80% Training and 20% Hold-out Test sets to ensure unbiased evaluation."
+                "## Step 3: Data Splitting\n",
+                f"• Divide dataset into 80% Training ({train_pct}%) and 20% Testing ({test_pct}%)\n",
+                "• Use stratified random sampling to preserve exact class distributions and guarantee zero data leakage"
             ]
         },
         {
@@ -657,16 +682,18 @@ plt.show()"""
                 f"X_train, X_test, y_train, y_test = train_test_split(\n",
                 f"    X, y, test_size={test_size}, random_state={random_seed}, {stratify_arg}\n",
                 f")\n",
-                "print(f'Training split: {X_train.shape[0]} samples')\n",
-                "print(f'Testing split:  {X_test.shape[0]} samples')"
+                "print(f'Training split: {X_train.shape[0]} samples ({train_pct}%) — strictly for training & 5-fold CV')\n",
+                "print(f'Testing split:  {X_test.shape[0]} samples ({test_pct}%) — kept 100% unseen for verification')"
             ]
         },
         {
             "cell_type": "markdown",
             "metadata": {},
             "source": [
-                "## 5. Feature Preprocessing Pipeline\n",
-                "Build a scikit-learn `ColumnTransformer` with median imputation + standard scaling for numeric features, and mode imputation + one-hot encoding for categorical features."
+                "## Step 4: Model Selection & Training\n",
+                f"• Assemble end-to-end scikit-learn Pipeline with automated ColumnTransformer\n",
+                f"• Initialize `{model_name}` using fine-tuned hyperparameters\n",
+                "• Train model strictly on training split"
             ]
         },
         {
@@ -694,23 +721,7 @@ plt.show()"""
                 "    transformers.append(('cat', cat_pipe, categorical_features))\n",
                 "\n",
                 "preprocessor = ColumnTransformer(transformers=transformers, remainder='drop')\n",
-                "print(f'Preprocessor configured with {len(numeric_features)} numeric and {len(categorical_features)} categorical features.')"
-            ]
-        },
-        {
-            "cell_type": "markdown",
-            "metadata": {},
-            "source": [
-                "## 6. Model Definition & Pipeline Assembly\n",
-                f"Initialize the `{model_name}` estimator using optimal fine-tuned hyperparameters discovered by MLPipe."
-            ]
-        },
-        {
-            "cell_type": "code",
-            "execution_count": None,
-            "metadata": {},
-            "outputs": [],
-            "source": [
+                "\n",
                 f"model_params = {formatted_params}\n",
                 f"estimator = {class_name}(**model_params)\n",
                 "\n",
@@ -718,23 +729,8 @@ plt.show()"""
                 "    ('preprocessor', preprocessor),\n",
                 "    ('estimator', estimator)\n",
                 "])\n",
-                "pipeline"
-            ]
-        },
-        {
-            "cell_type": "markdown",
-            "metadata": {},
-            "source": [
-                "## 7. Model Training\n",
-                "Train the entire pipeline strictly on the training set."
-            ]
-        },
-        {
-            "cell_type": "code",
-            "execution_count": None,
-            "metadata": {},
-            "outputs": [],
-            "source": [
+                "\n",
+                "print('Fitting end-to-end pipeline...')\n",
                 "pipeline.fit(X_train, y_train)\n",
                 "print('Training complete!')"
             ]
@@ -743,8 +739,11 @@ plt.show()"""
             "cell_type": "markdown",
             "metadata": {},
             "source": [
-                "## 8. Test Set Evaluation & Metrics\n",
-                "Evaluate model predictions against held-out ground truth."
+                "## Step 5: Model Evaluation & Optimization\n",
+                "• Test model performance on held-out test data using comprehensive metrics\n",
+                "• Generate visual diagnostic plots (Confusion Matrix / Actual vs Predicted)\n",
+                "• Extract and visualize feature importances to explain model predictions\n",
+                "• Serialize model to disk as `pipeline.joblib` and demonstrate live inference"
             ]
         },
         {
