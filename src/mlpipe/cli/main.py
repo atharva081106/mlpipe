@@ -78,6 +78,23 @@ def _parse_param_override(val_str: str, original_val: Any = None) -> Any:
     return val_clean
 
 
+def explain_metric(metric: str) -> str:
+    m = metric.lower()
+    if "roc_auc" in m:
+        return "Receiver Operating Characteristic (ROC-AUC): Measures how well positive vs negative classes are separated across all decision thresholds (0.5 = random guess, 1.0 = perfect)."
+    elif "f1" in m:
+        return "F1-Score: Harmonic balance of Precision (avoiding false alarms) and Recall (catching actual positive cases). Scale: 0.0 to 1.0."
+    elif "accuracy" in m:
+        return "Accuracy: Percentage of total predictions that exactly match ground truth."
+    elif "r2" in m:
+        return "R² (Coefficient of Determination): Proportion of variance explained by model (1.0 = perfect prediction, 0.0 = baseline average)."
+    elif "rmse" in m:
+        return "Root Mean Squared Error (RMSE): Average magnitude of prediction errors in target units (lower is better)."
+    elif "mae" in m:
+        return "Mean Absolute Error (MAE): Average absolute difference between predicted and actual values (lower is better)."
+    return "Standard evaluation metric."
+
+
 app = typer.Typer(
     name="mlpipe",
     help="MLPipe: Production-ready tabular ML automation library and terminal CLI.",
@@ -761,8 +778,10 @@ def run_cmd(
             col_table.add_row(f"[{idx}]", col, dtype, f"{missing_pct}%", f"{unique_cnt:,}", samples[:35])
 
         console.print(col_table)
+        console.print("[dim]💡 Guide: 'float64' & 'int64' are numeric numbers. 'object' means text or categories.[/dim]\n")
 
         # ── Step 2: Choose Target Factor to Predict ───────────────────────────────
+        console.print("[dim]💡 What is a Target? The Target is the variable you want the AI to learn how to predict. All other columns become input features.[/dim]")
         rec_target, rec_reason = recommend_target_column(ds.df)
         rec_target_idx = cols.index(rec_target) + 1
 
@@ -792,12 +811,18 @@ def run_cmd(
                 raise typer.Exit(code=1)
 
         task_type = detect_task(ds.df[target])
+        if task_type == "classification":
+            task_desc = "Classification (Predicting discrete classes/categories such as Yes/No or Churn/Retain)"
+        else:
+            task_desc = "Regression (Predicting continuous numerical quantities such as Price, Sales, or Score)"
+
         console.print(f"\n[green]{CHECK}[/green] Target Selected: [bold yellow]{target}[/bold yellow]")
-        console.print(f"[green]{CHECK}[/green] Inferred Problem Type: [bold cyan]{task_type.capitalize()}[/bold cyan]")
+        console.print(f"[green]{CHECK}[/green] Inferred Problem Type: [bold cyan]{task_desc}[/bold cyan]")
 
         # ── Step 3: Automated EDA & Splitting ─────────────────────────────────────
         console.print("\n[bold]Automated Exploratory Data Analysis (EDA)[/bold]")
         console.print(RULE * 44)
+        console.print("[dim]💡 Guide: Target distribution reveals class balance. Feature correlation measures predictive relationship strength (-1.0 to +1.0).[/dim]\n")
         eda_res = perform_eda(ds.df, target, task_type)
 
         if task_type == "classification":
@@ -908,13 +933,20 @@ def run_cmd(
             lb_table.add_row(row["model"], cv_str, test_str, t_str, stat_str)
 
         console.print(lb_table)
+        console.print(
+            f"\n[dim]💡 Leaderboard Guide:\n"
+            f"  • CV ({result.primary_metric}): 5-fold cross-validation score on training folds (guarantees consistency).\n"
+            f"  • Test ({result.primary_metric}): Unbiased final score on the 20% unseen test data (real-world performance).\n"
+            f"  • Metric: {explain_metric(result.primary_metric)}[/dim]\n"
+        )
 
         # Winning Model Panel
         console.print(Panel(
             f"[bold green]{result.best_model_name}[/bold green]\n"
-            f"Primary Metric: [bold]{result.primary_metric}[/bold]\n"
+            f"Primary Metric:         [bold]{result.primary_metric}[/bold]\n"
             f"Cross-Validation Score: [bold]{result.best_cv_score:.4f}[/bold]\n"
-            f"Hold-out Test Score:    [bold]{result.test_score:.4f}[/bold]",
+            f"Hold-out Test Score:    [bold]{result.test_score:.4f}[/bold]\n\n"
+            f"[dim]Selected as champion model because it achieved the highest cross-validation score without overfitting.[/dim]",
             title="Winning Model Selected",
             border_style="green"
         ))
@@ -923,6 +955,8 @@ def run_cmd(
         if result.test_preview:
             console.print(f"\n[bold]Hold-Out Test Set Verification Preview[/bold] (Actual Ground Truth vs Model Prediction)")
             console.print(RULE * 44)
+            console.print("[dim]💡 Guide: These rows are from the hold-out test set that the model never saw during training. Compare the Actual Ground Truth with the Model's Prediction to judge real performance firsthand.[/dim]\n")
+
             test_table = Table(header_style="bold cyan", border_style="dim")
             test_table.add_column("Row", style="dim", justify="right")
             test_table.add_column("Sample Features", style="cyan")
@@ -956,8 +990,9 @@ def run_cmd(
         console.print("\n[bold]Fine-Tuning Options[/bold]")
         console.print(RULE * 44)
         console.print(
-            "💡 [bold green]Recommendation:[/bold green] [dim]Automated 5-fold CV hyperparameter search has already discovered "
-            "an optimal configuration. Fine-tuning is optional for testing custom parameter ranges or constraints.[/dim]\n"
+            "💡 [bold green]What is Fine-Tuning?[/bold green] [dim]Machine learning models use internal configuration parameters "
+            "(hyperparameters) like tree depth and learning speed. MLPipe's automated tuning already found a high-performing configuration, "
+            "but you can manually adjust them below to explore custom tradeoffs.[/dim]\n"
         )
         do_finetune = Confirm.ask(
             f"[bold green]Would you like to fine-tune the winning model ({result.best_model_name}) with custom parameters?[/bold green]",
@@ -1013,7 +1048,8 @@ def run_cmd(
         console.print(RULE * 44)
         console.print(
             "💡 [bold green]Recommendation:[/bold green] [bold cyan]Yes (Recommended)[/bold cyan] — Generates a standalone, "
-            "reproducible Python script (.py) using standard scikit-learn & pandas with zero external dependencies on mlpipe.\n"
+            "reproducible Python script (.py) containing EVERY line of code for data cleaning, preprocessing, "
+            "model creation, training, evaluation, explainability, and deployment using standard scikit-learn & pandas with zero external dependencies on mlpipe.\n"
         )
         want_code = export_code is not None or Confirm.ask(
             "[bold green]Would you like to get the complete, standalone Python code performed on this dataset?[/bold green]",
@@ -1048,11 +1084,12 @@ def run_cmd(
                 script_path.parent.mkdir(parents=True, exist_ok=True)
                 script_path.write_text(code, encoding="utf-8")
 
-                # Show code snippet
+                # Print complete code right in the terminal
                 console.print(f"\n[green]{CHECK}[/green] Standalone Python script written to [bold cyan]{script_path}[/bold cyan]\n")
-                console.print("[bold]Script Preview (First 25 lines):[/bold]")
-                preview_lines = "\n".join(code.splitlines()[:25])
-                console.print(Syntax(preview_lines, "python", theme="monokai", line_numbers=True))
+                console.print("[bold cyan]══════════════════════════════════════════════════════════════════[/bold cyan]")
+                console.print("[bold cyan]COMPLETE STANDALONE PYTHON CODE (Cleaning, Preprocessing, ML, Tuning, Eval):[/bold cyan]")
+                console.print("[bold cyan]══════════════════════════════════════════════════════════════════[/bold cyan]")
+                console.print(Syntax(code, "python", theme="monokai", line_numbers=True))
                 console.print(f"\n[dim]Run this script independently on any machine with:[/dim]")
                 console.print(f"[bold]python {script_path.name}[/bold]\n")
 
