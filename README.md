@@ -65,9 +65,29 @@ mlpipe --version
 
 ## ⚡ Quick Start
 
-### 1. Terminal CLI
+### 1. Interactive Guided Studio (Recommended)
 
-Train an end-to-end classification pipeline:
+Simply point MLPipe at your CSV dataset:
+
+```bash
+mlpipe run demo_data/customer_churn.csv
+```
+
+MLPipe interactively guides you through:
+1. **CSV Analysis & Structure**: Inspects columns, missingness, and data types.
+2. **Target Selection**: Pick which factor to predict by typing its number or name.
+3. **Automated EDA**: View class balance/target statistics and top feature correlations.
+4. **Data Splitting**: Generates stratified `train.csv` (80%) and `test.csv` (20%).
+5. **Model Choice**: Select which ML models to train (single, multiple, or all).
+6. **Live Evaluation**: Displays leaderboard, best model panel, and a hold-out test verification preview.
+7. **Fine-Tuning**: Interactively adjust hyperparameters and see instant before/after test score comparisons.
+8. **Code Export**: Exports a clean, standalone Python script reproducing the full pipeline independently.
+
+---
+
+### 2. Autonomous One-Shot Training
+
+Train an end-to-end classification pipeline directly:
 
 ```bash
 mlpipe train demo_data/customer_churn.csv --target churn

@@ -109,3 +109,38 @@ def test_cli_split_command(sample_csv_file: Path, tmp_path: Path):
     assert (split_dir / "train.csv").exists()
     assert (split_dir / "test.csv").exists()
 
+
+def test_cli_guided_run_interactive(sample_csv_file: Path, tmp_path: Path):
+    script_out = tmp_path / "my_reproduce.py"
+    # 1. target: "target"
+    # 2. models: "1, 2"
+    # 3. finetune: "n"
+    # 4. export code: "y"
+    # 5. script name: str(script_out)
+    user_inputs = f"target\n1, 2\nn\ny\n{script_out}\n"
+
+    res = runner.invoke(app, ["run", str(sample_csv_file)], input=user_inputs)
+    assert res.exit_code == 0, f"Command failed: {res.output}"
+    assert "MLPipe Guided Studio" in res.output
+    assert "Available Columns & Data Types" in res.output
+    assert "Automated Exploratory Data Analysis" in res.output
+    assert "Winning Model Selected" in res.output
+    assert "Hold-Out Test Set Verification Preview" in res.output
+    assert script_out.exists()
+
+
+def test_cli_guided_run_finetune(sample_csv_file: Path, tmp_path: Path):
+    script_out = tmp_path / "finetuned_reproduce.py"
+    # 1. target: "target"
+    # 2. models: "1" (single model)
+    # 3. finetune: "y"
+    # 4. keep parameter default (press Enter)
+    user_inputs = "target\n1\ny\n\n"
+
+    res = runner.invoke(app, ["run", str(sample_csv_file), "--export-code", str(script_out)], input=user_inputs)
+    assert res.exit_code == 0, f"Command failed: {res.output}"
+    assert "Fine-Tuning Options" in res.output
+    assert script_out.exists()
+
+
+

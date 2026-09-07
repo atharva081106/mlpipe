@@ -9,20 +9,26 @@ from pathlib import Path
 import sys
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 from rich.console import Console
 from rich.panel import Panel
+from rich.prompt import Confirm, Prompt
+from rich.syntax import Syntax
 from rich.table import Table
 import typer
 
 from mlpipe.artifacts.manager import inspect_run_directory
+from mlpipe.codegen.generator import generate_standalone_code
 from mlpipe.core.config import TaskType, TrainingMode
 from mlpipe.core.exceptions import MLPipeError
 from mlpipe.core.pipeline import Pipeline
+from mlpipe.data.eda import perform_eda
 from mlpipe.data.ingestion import load_dataset
 from mlpipe.data.profiling import profile_dataset
 from mlpipe.data.splitting import split_data
 from mlpipe.data.validation import detect_task, validate_dataset
+from mlpipe.models.selection import get_candidates_for_task
 from mlpipe.version import __version__
 
 # Cross-platform encoding-safe glyphs
@@ -664,4 +670,334 @@ def split_cmd(
     except Exception as e:
         err_console.print(f"[bold red]Unexpected Error:[/bold red] {e}")
         raise typer.Exit(code=1)
+
+
+# ─── 7. Interactive Guided Studio Command ─────────────────────────────────────
+
+@app.command("run")
+@app.command("interactive")
+def run_cmd(
+    dataset_path: Path = typer.Argument(
+        ...,
+        help="Path to the CSV dataset to analyze and train on.",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    output: Path = typer.Option(
+        Path("./mlpipe_runs"),
+        "--output",
+        "-o",
+        help="Base directory to save run artifacts.",
+    ),
+    export_code: Optional[Path] = typer.Option(
+        None,
+        "--export-code",
+        "-c",
+        help="Optional destination path to export standalone reproducible Python script.",
+    ),
+):
+    """
+    Interactive guided studio: analyze CSV, choose target factor, view EDA,
+    select ML models, evaluate test results, fine-tune parameters, and export reproducible code.
+    """
+    try:
+        console.print(f"\n[bold cyan]MLPipe Guided Studio[/bold cyan] {DASH} [bold]{dataset_path.name}[/bold]\n")
+
+        # ── Step 1: Ingest & Inspect Columns ──────────────────────────────────────
+        ds = load_dataset(dataset_path)
+
+        ov_table = Table(title="Dataset Overview", show_header=False, border_style="dim")
+        ov_table.add_row("Filename", ds.filename)
+        ov_table.add_row("Total Rows", f"{ds.num_rows:,}")
+        ov_table.add_row("Total Columns", f"{ds.num_cols:,}")
+        ov_table.add_row("Memory Size", f"{ds.memory_mb} MB")
+        console.print(ov_table)
+        console.print()
+
+        col_table = Table(title="Available Columns & Data Types", header_style="bold cyan", border_style="dim")
+        col_table.add_column("#", justify="right", style="bold yellow")
+        col_table.add_column("Column Name", style="bold")
+        col_table.add_column("Type", style="cyan")
+        col_table.add_column("Missing %", justify="right")
+        col_table.add_column("Unique", justify="right")
+        col_table.add_column("Sample Values", style="dim")
+
+        cols = list(ds.df.columns)
+        for idx, col in enumerate(cols, start=1):
+            dtype = str(ds.df[col].dtype)
+            missing_pct = round((ds.df[col].isnull().sum() / len(ds.df)) * 100, 1)
+            unique_cnt = ds.df[col].nunique()
+            samples = ", ".join(str(v) for v in ds.df[col].dropna().unique()[:3])
+            col_table.add_row(f"[{idx}]", col, dtype, f"{missing_pct}%", f"{unique_cnt:,}", samples[:35])
+
+        console.print(col_table)
+
+        # ── Step 2: Choose Target Factor to Predict ───────────────────────────────
+        target_choice = Prompt.ask(
+            "\n[bold green]Which factor / column do you want to predict?[/bold green] (enter number or name)",
+            default=str(len(cols)),
+        )
+
+        target = None
+        if target_choice.isdigit() and 1 <= int(target_choice) <= len(cols):
+            target = cols[int(target_choice) - 1]
+        elif target_choice in cols:
+            target = target_choice
+        else:
+            matched = [c for c in cols if c.lower() == target_choice.lower()]
+            if matched:
+                target = matched[0]
+            else:
+                err_console.print(f"[bold red]Column '{target_choice}' not found in dataset columns.[/bold red]")
+                raise typer.Exit(code=1)
+
+        task_type = detect_task(ds.df[target])
+        console.print(f"\n[green]{CHECK}[/green] Target Selected: [bold yellow]{target}[/bold yellow]")
+        console.print(f"[green]{CHECK}[/green] Inferred Problem Type: [bold cyan]{task_type.capitalize()}[/bold cyan]")
+
+        # ── Step 3: Automated EDA & Splitting ─────────────────────────────────────
+        console.print("\n[bold]Automated Exploratory Data Analysis (EDA)[/bold]")
+        console.print(RULE * 44)
+        eda_res = perform_eda(ds.df, target, task_type)
+
+        if task_type == "classification":
+            tdist_table = Table(title=f"Target Class Distribution ('{target}')", header_style="bold cyan", border_style="dim")
+            tdist_table.add_column("Class Label", style="bold")
+            tdist_table.add_column("Count", justify="right")
+            tdist_table.add_column("Percentage", justify="right")
+            for row in eda_res.target_distribution.get("classes", []):
+                tdist_table.add_row(str(row["class"]), f"{row['count']:,}", f"{row['percentage']}%")
+            console.print(tdist_table)
+        else:
+            tdist_table = Table(title=f"Target Numerical Distribution ('{target}')", show_header=False, border_style="dim")
+            for k, v in eda_res.target_distribution.items():
+                tdist_table.add_row(k.capitalize(), str(v))
+            console.print(tdist_table)
+
+        if eda_res.correlations:
+            corr_table = Table(title=f"Top Correlated Features with '{target}'", header_style="bold magenta", border_style="dim")
+            corr_table.add_column("Feature", style="bold")
+            corr_table.add_column("Abs. Correlation", justify="right", style="yellow")
+            for c in eda_res.correlations:
+                corr_table.add_row(c["feature"], str(c["correlation"]))
+            console.print(corr_table)
+
+        split_data_res = split_data(ds.df, target, task_type, test_size=0.20)
+        console.print(f"\n[green]{CHECK}[/green] Data Split: [bold]{split_data_res.train_size:,}[/bold] train rows / [bold]{split_data_res.test_size:,}[/bold] test rows (80% / 20%)")
+
+        # ── Step 4: Model Choice (Single or Multiple) ─────────────────────────────
+        candidates = get_candidates_for_task(task_type, mode="balanced")
+        console.print(f"\n[bold]Select Machine Learning Models to Train[/bold]")
+        console.print(RULE * 44)
+
+        for idx, cand in enumerate(candidates, start=1):
+            console.print(f"  [bold yellow][{idx}][/bold yellow] [bold]{cand.name}[/bold]")
+        console.print(f"  [bold yellow][A][/bold yellow] [bold]All Models[/bold] (Train & compare all candidates)")
+
+        model_choice = Prompt.ask(
+            "\n[bold green]Which models would you like to train?[/bold green] (enter numbers e.g. 1, 2 or 'A' for all)",
+            default="A",
+        )
+
+        selected_model_names = None
+        if model_choice.strip().lower() not in ["a", "all", "*"]:
+            selected_indices = [
+                int(p.strip()) for p in model_choice.replace(";", ",").split(",")
+                if p.strip().isdigit() and 1 <= int(p.strip()) <= len(candidates)
+            ]
+            if selected_indices:
+                selected_model_names = [candidates[i - 1].name for i in selected_indices]
+                console.print(f"[green]{CHECK}[/green] Training selected models: [cyan]{', '.join(selected_model_names)}[/cyan]")
+            else:
+                console.print("[yellow]Invalid choice, defaulting to all candidate models.[/yellow]")
+
+        if not selected_model_names:
+            console.print(f"[green]{CHECK}[/green] Training all {len(candidates)} candidate models")
+
+        # ── Step 5: Train, Test, and Present Results ──────────────────────────────
+        console.print("\n[bold]Training & Evaluating Models[/bold]")
+        console.print(RULE * 44)
+
+        pipe = Pipeline(
+            target=target,
+            task=task_type,
+            mode="balanced",
+            selected_models=selected_model_names,
+            output_dir=output,
+        )
+
+        def step_hook(stage: str, msg: str):
+            if stage == "training":
+                m = msg.replace("Training & tuning candidate: ", "").replace("...", "")
+                console.print(f"  [green]{CHECK}[/green] Trained & tuned {m}")
+
+        result = pipe.fit(ds, on_progress=step_hook)
+
+        # Present leaderboard
+        lb_table = Table(title="Model Evaluation Leaderboard", header_style="bold cyan", border_style="dim")
+        lb_table.add_column("Model", style="bold")
+        lb_table.add_column(f"CV ({result.primary_metric})", justify="right", style="yellow")
+        lb_table.add_column(f"Test ({result.primary_metric})", justify="right", style="green")
+        lb_table.add_column("Time", justify="right", style="dim")
+        lb_table.add_column("Status")
+
+        for row in result.leaderboard:
+            cv_str = f"{row['cv_score']:.4f}" if row['cv_score'] is not None else DASH
+            test_str = f"{row['test_score']:.4f}" if row['test_score'] is not None else DASH
+            t_str = f"{row['training_time_s']:.1f}s"
+            stat_str = f"[green]{CHECK}[/green]" if row['status'] == "success" else f"[red]{CROSS}[/red]"
+            lb_table.add_row(row["model"], cv_str, test_str, t_str, stat_str)
+
+        console.print(lb_table)
+
+        # Winning Model Panel
+        console.print(Panel(
+            f"[bold green]{result.best_model_name}[/bold green]\n"
+            f"Primary Metric: [bold]{result.primary_metric}[/bold]\n"
+            f"Cross-Validation Score: [bold]{result.best_cv_score:.4f}[/bold]\n"
+            f"Hold-out Test Score:    [bold]{result.test_score:.4f}[/bold]",
+            title="Winning Model Selected",
+            border_style="green"
+        ))
+
+        # Hold-Out Test Set Verification Preview
+        if result.test_preview:
+            console.print(f"\n[bold]Hold-Out Test Set Verification Preview[/bold] (Actual Ground Truth vs Model Prediction)")
+            console.print(RULE * 44)
+            test_table = Table(header_style="bold cyan", border_style="dim")
+            test_table.add_column("Row", style="dim", justify="right")
+            test_table.add_column("Sample Features", style="cyan")
+            test_table.add_column(f"Actual ({target})", justify="right", style="bold yellow")
+            test_table.add_column(f"Predicted ({target})", justify="right", style="bold green")
+            test_table.add_column("Evaluation", justify="center")
+
+            for row_data in result.test_preview:
+                feat_str = ", ".join(f"{k}={v}" for k, v in row_data.get("features", {}).items())
+                act_val = row_data["actual"]
+                pred_val = row_data["predicted"]
+
+                if result.task_type == "classification":
+                    match = row_data.get("match", False)
+                    eval_str = f"[bold green]{CHECK} Match[/bold green]" if match else f"[bold red]{CROSS} Mismatch[/bold red]"
+                    test_table.add_row(f"#{row_data['row_idx']}", feat_str, str(act_val), str(pred_val), eval_str)
+                else:
+                    err = row_data.get("error", 0.0)
+                    eval_str = f"Diff: {err:,.2f}"
+                    test_table.add_row(
+                        f"#{row_data['row_idx']}",
+                        feat_str,
+                        f"{act_val:,.2f}" if isinstance(act_val, (int, float)) else str(act_val),
+                        f"{pred_val:,.2f}" if isinstance(pred_val, (int, float)) else str(pred_val),
+                        eval_str,
+                    )
+
+            console.print(test_table)
+
+        # ── Step 6: Interactive Parameter Fine-Tuning ─────────────────────────────
+        console.print("\n[bold]Fine-Tuning Options[/bold]")
+        console.print(RULE * 44)
+        do_finetune = Confirm.ask(
+            f"[bold green]Would you like to fine-tune the winning model ({result.best_model_name}) with custom parameters?[/bold green]",
+            default=False,
+        )
+
+        if do_finetune and pipe._fitted_pipeline:
+            best_estimator = pipe._fitted_pipeline.named_steps.get("estimator")
+            if best_estimator:
+                current_params = best_estimator.get_params()
+                tuneable_keys = [k for k in ["n_estimators", "max_depth", "learning_rate", "C", "min_samples_split", "n_neighbors", "alpha"] if k in current_params]
+
+                console.print(f"\nCurrent key parameters for [bold]{result.best_model_name}[/bold]:")
+                for k in tuneable_keys:
+                    console.print(f"  {BULLET} {k} = {current_params[k]}")
+
+                param_overrides = {}
+                console.print("\nEnter new parameter values (or press Enter to keep current):")
+                for k in tuneable_keys:
+                    val_input = Prompt.ask(f"  {k}", default=str(current_params[k]))
+                    if val_input.strip() != str(current_params[k]):
+                        cur_type = type(current_params[k])
+                        try:
+                            if cur_type is int:
+                                param_overrides[k] = int(val_input)
+                            elif cur_type is float:
+                                param_overrides[k] = float(val_input)
+                            else:
+                                param_overrides[k] = val_input
+                        except ValueError:
+                            param_overrides[k] = val_input
+
+                if param_overrides:
+                    console.print(f"\n[cyan]Retuning with parameters: {param_overrides}...[/cyan]")
+                    tune_res = pipe.retune_best_model(param_overrides)
+
+                    cmp_table = Table(title="Fine-Tuning Performance Comparison", header_style="bold cyan", border_style="dim")
+                    cmp_table.add_column("Stage", style="bold")
+                    cmp_table.add_column(f"Test Score ({tune_res['primary_metric']})", justify="right")
+                    cmp_table.add_column("Delta", justify="right")
+
+                    diff = tune_res["new_test_score"] - tune_res["old_test_score"]
+                    diff_str = f"+{diff:.4f}" if diff > 0 else f"{diff:.4f}"
+                    diff_styled = f"[green]{diff_str}[/green]" if diff >= 0 else f"[red]{diff_str}[/red]"
+
+                    cmp_table.add_row("Before Fine-Tuning", f"{tune_res['old_test_score']:.4f}", DASH)
+                    cmp_table.add_row("After Fine-Tuning", f"{tune_res['new_test_score']:.4f}", diff_styled)
+                    console.print(cmp_table)
+                    console.print(f"[green]{CHECK}[/green] Model updated with fine-tuned parameters.")
+                else:
+                    console.print("[dim]No parameters changed.[/dim]")
+
+        # ── Step 7: Export Standalone Python Script ───────────────────────────────
+        console.print("\n[bold]Code Generation & Export[/bold]")
+        console.print(RULE * 44)
+        want_code = export_code is not None or Confirm.ask(
+            "[bold green]Would you like to get the complete, standalone Python code performed on this dataset?[/bold green]",
+            default=True,
+        )
+
+        if want_code and pipe._fitted_pipeline:
+            best_estimator = pipe._fitted_pipeline.named_steps.get("estimator")
+            if best_estimator:
+                num_cols = list(ds.df.select_dtypes(include=[np.number]).columns)
+                cat_cols = [c for c in ds.df.columns if c not in num_cols and c != target]
+
+                code = generate_standalone_code(
+                    dataset_path=str(dataset_path.resolve()),
+                    target_column=target,
+                    task_type=task_type,
+                    model_name=result.best_model_name,
+                    estimator_params=best_estimator.get_params(),
+                    numeric_columns=num_cols,
+                    categorical_columns=cat_cols,
+                    test_size=0.20,
+                    random_seed=42,
+                )
+
+                if export_code:
+                    script_path = export_code
+                else:
+                    script_path_str = Prompt.ask("Save script as", default="reproduce_pipeline.py")
+                    script_path = Path(script_path_str)
+
+                script_path.parent.mkdir(parents=True, exist_ok=True)
+                script_path.write_text(code, encoding="utf-8")
+
+                # Show code snippet
+                console.print(f"\n[green]{CHECK}[/green] Standalone Python script written to [bold cyan]{script_path}[/bold cyan]\n")
+                console.print("[bold]Script Preview (First 25 lines):[/bold]")
+                preview_lines = "\n".join(code.splitlines()[:25])
+                console.print(Syntax(preview_lines, "python", theme="monokai", line_numbers=True))
+                console.print(f"\n[dim]Run this script independently on any machine with:[/dim]")
+                console.print(f"[bold]python {script_path.name}[/bold]\n")
+
+        console.print(f"[bold green]{CHECK} MLPipe Guided Session Complete![/bold green]\n")
+
+    except MLPipeError as e:
+        err_console.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        err_console.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
 

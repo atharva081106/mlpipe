@@ -34,6 +34,7 @@ class PipelineConfig:
     cv_folds: int = 5
     output_dir: Path = field(default_factory=lambda: Path("./mlpipe_runs"))
     verbose: bool = False
+    selected_models: Optional[list] = None
 
     def __post_init__(self):
         # Normalize and validate task

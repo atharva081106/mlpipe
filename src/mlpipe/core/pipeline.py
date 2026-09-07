@@ -71,6 +71,7 @@ class Pipeline:
         cv_folds: int = 5,
         output_dir: Union[str, Path] = "./mlpipe_runs",
         verbose: bool = False,
+        selected_models: Optional[List[str]] = None,
     ):
         self.config = PipelineConfig(
             target=target,
@@ -81,6 +82,7 @@ class Pipeline:
             cv_folds=cv_folds,
             output_dir=Path(output_dir),
             verbose=verbose,
+            selected_models=selected_models,
         )
         configure_logging(verbose=verbose)
 
@@ -88,6 +90,7 @@ class Pipeline:
         self._result: Optional[PipelineResult] = None
         self._profile: Optional[DatasetProfile] = None
         self._validation: Optional[ValidationReport] = None
+        self._split_res: Optional[SplitData] = None
 
     @property
     def is_fitted(self) -> bool:
@@ -177,6 +180,7 @@ class Pipeline:
             test_size=self.config.test_size,
             random_seed=self.config.random_seed,
         )
+        self._split_res = split_res
 
         # ── 5. Preprocessing Pipeline Construction ─────────────────────────
         _notify("preprocessing", "Building feature preprocessing pipeline...")
@@ -190,6 +194,15 @@ class Pipeline:
 
         # ── 7. Model Selection & Tuning ────────────────────────────────────
         candidates = get_candidates_for_task(task_type, mode=self.config.mode.value)
+        if self.config.selected_models:
+            sel_norm = [m.lower().strip() for m in self.config.selected_models]
+            filtered = [
+                c for c in candidates
+                if any(s in c.name.lower() or c.name.lower() in s for s in sel_norm)
+            ]
+            if filtered:
+                candidates = filtered
+
         tuning_results: List[TuningResult] = []
 
         for candidate in candidates:
@@ -433,3 +446,66 @@ class Pipeline:
         instance = cls(target=target)
         instance._fitted_pipeline = fitted_pipe
         return instance
+
+    def retune_best_model(self, param_overrides: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Retune the winning model with specific parameter overrides and evaluate on the test set.
+
+        Args:
+            param_overrides: Dictionary of hyperparameter overrides (e.g. {'n_estimators': 200}).
+
+        Returns:
+            Dictionary with old and new test scores, parameters, and updated metrics.
+        """
+        if not self.is_fitted or self._fitted_pipeline is None or self._result is None:
+            raise PipelineError("Pipeline must be fitted before fine-tuning.")
+        if self._split_res is None:
+            raise PipelineError("No training split available for fine-tuning.")
+
+        estimator = self._fitted_pipeline.named_steps.get("estimator")
+        if estimator is None:
+            raise PipelineError("Pipeline does not contain an estimator step.")
+
+        est_class = estimator.__class__
+        current_params = estimator.get_params()
+
+        # Update params
+        updated_params = dict(current_params)
+        for k, v in param_overrides.items():
+            if k in current_params:
+                updated_params[k] = v
+
+        # Build clean kwargs
+        valid_kwargs = {k: v for k, v in updated_params.items() if not k.startswith("_")}
+        new_estimator = est_class(**valid_kwargs)
+
+        preprocessor = self._fitted_pipeline.named_steps.get("preprocessor")
+        new_pipeline = SklearnPipeline([
+            ("preprocessor", preprocessor),
+            ("estimator", new_estimator),
+        ])
+
+        # Fit on training split
+        new_pipeline.fit(self._split_res.X_train, self._split_res.y_train)
+
+        # Evaluate on hold-out test split
+        test_metrics = evaluate_pipeline_on_test(
+            pipeline=new_pipeline,
+            X_test=self._split_res.X_test,
+            y_test=self._split_res.y_test,
+            task_type=self._result.task_type,
+            primary_metric=self._result.primary_metric,
+        )
+        new_test_score = test_metrics.get(self._result.primary_metric, 0.0)
+
+        # Update active fitted pipeline
+        self._fitted_pipeline = new_pipeline
+
+        return {
+            "model": self._result.best_model_name,
+            "old_test_score": self._result.test_score,
+            "new_test_score": new_test_score,
+            "primary_metric": self._result.primary_metric,
+            "params": param_overrides,
+            "test_metrics": test_metrics,
+        }
