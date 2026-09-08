@@ -1,5 +1,5 @@
 """
-End-to-End integration tests for MLPipe Python API and data leakage prevention.
+End-to-End integration tests for MLFlux Python API and data leakage prevention.
 """
 
 from pathlib import Path
@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from mlpipe.core.pipeline import Pipeline
-from mlpipe.data.splitting import split_data
-from mlpipe.preprocessing.builder import build_preprocessor, classify_columns
+from mlflux.core.pipeline import Pipeline
+from mlflux.data.splitting import split_data
+from mlflux.preprocessing.builder import build_preprocessor, classify_columns
 
 
 def test_e2e_classification(tmp_path: Path):

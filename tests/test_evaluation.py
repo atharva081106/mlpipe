@@ -4,9 +4,9 @@ import pandas as pd
 from sklearn.pipeline import Pipeline
 from sklearn.dummy import DummyClassifier, DummyRegressor
 
-from mlpipe.evaluation.evaluator import evaluate_pipeline_on_test, build_leaderboard
-from mlpipe.evaluation.metrics import select_primary_metric
-from mlpipe.tuning.search import TuningResult
+from mlflux.evaluation.evaluator import evaluate_pipeline_on_test, build_leaderboard
+from mlflux.evaluation.metrics import select_primary_metric
+from mlflux.tuning.search import TuningResult
 
 
 def test_select_primary_metric():

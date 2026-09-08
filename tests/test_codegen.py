@@ -6,8 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 
-from mlpipe.codegen.generator import generate_standalone_code, generate_standalone_notebook
-from mlpipe.core.pipeline import Pipeline
+from mlflux.codegen.generator import generate_standalone_code, generate_standalone_notebook
+from mlflux.core.pipeline import Pipeline
 
 
 def test_codegen_produces_valid_syntax(sample_csv_file: Path):

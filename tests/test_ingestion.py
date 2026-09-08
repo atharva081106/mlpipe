@@ -3,8 +3,8 @@
 from pathlib import Path
 import pytest
 
-from mlpipe.core.exceptions import DatasetError
-from mlpipe.data.ingestion import load_dataset
+from mlflux.core.exceptions import DatasetError
+from mlflux.data.ingestion import load_dataset
 
 
 def test_load_valid_csv(sample_csv_file: Path):

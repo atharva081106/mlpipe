@@ -1,9 +1,9 @@
-"""Tests for MLPipe CLI commands."""
+"""Tests for MLFlux CLI commands."""
 
 from pathlib import Path
 from typer.testing import CliRunner
 
-from mlpipe.cli.main import app
+from mlflux.cli.main import app
 
 runner = CliRunner()
 
@@ -11,22 +11,22 @@ runner = CliRunner()
 def test_cli_help():
     res = runner.invoke(app, ["--help"])
     assert res.exit_code == 0
-    assert "MLPipe: Production-ready tabular ML automation" in res.output
+    assert "MLFlux: Production-ready tabular ML automation" in res.output
 
 
-from mlpipe.version import __version__
+from mlflux.version import __version__
 
 
 def test_cli_version():
     res = runner.invoke(app, ["version"])
     assert res.exit_code == 0
-    assert f"MLPipe v{__version__}" in res.output
+    assert f"MLFlux v{__version__}" in res.output
 
 
 def test_cli_profile_human(sample_csv_file: Path):
     res = runner.invoke(app, ["profile", str(sample_csv_file)])
     assert res.exit_code == 0
-    assert "MLPipe Dataset Profile" in res.output
+    assert "MLFlux Dataset Profile" in res.output
     assert "Dataset Overview" in res.output
     assert "Column Details" in res.output
     assert "numeric" in res.output
@@ -124,7 +124,7 @@ def test_cli_guided_run_interactive(sample_csv_file: Path, tmp_path: Path):
 
     res = runner.invoke(app, ["run", str(sample_csv_file)], input=user_inputs)
     assert res.exit_code == 0, f"Command failed: {res.output}"
-    assert "MLPipe Guided Studio" in res.output
+    assert "MLFlux Guided Studio" in res.output
     assert "Available Columns & Data Types" in res.output
     assert "Automated Exploratory Data Analysis" in res.output
     assert "Winning Model Selected" in res.output

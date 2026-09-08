@@ -1,4 +1,4 @@
-# MLPipe
+# MLFlux (formerly MLPipe)
 
 > **Production-ready tabular ML automation library and terminal CLI.**  
 > From raw CSV to evaluated, reproducible, deployable model pipelines in one command.
@@ -7,7 +7,7 @@
 
 ## 🚀 Overview
 
-**MLPipe** automates the repetitive engineering lifecycle for tabular machine learning models. Simply point MLPipe at your CSV dataset and designate a target column:
+**MLFlux** automates the repetitive engineering lifecycle for tabular machine learning models. Simply point MLFlux at your CSV dataset and designate a target column:
 
 ```
 Raw CSV Dataset
@@ -37,7 +37,7 @@ Artifact Generation (Reusable pipeline, model, metadata & reports)
 Instant Predictions (CLI & Python inference)
 ```
 
-No hardcoded results. No fake training. Real scikit-learn models and metrics computed on your CPU machine.
+No hardcoded results. No fake training. Real scikit-learn models and metrics computed on your machine.
 
 ---
 
@@ -46,10 +46,10 @@ No hardcoded results. No fake training. Real scikit-learn models and metrics com
 Install directly from PyPI from any terminal:
 
 ```bash
-pip install mlpipe-cli
+pip install mlflux
 ```
 
-Or install directly from GitHub without cloning:
+Or install directly from GitHub:
 
 ```bash
 pip install git+https://github.com/atharva081106/mlpipe.git
@@ -58,8 +58,9 @@ pip install git+https://github.com/atharva081106/mlpipe.git
 Verify the installation:
 
 ```bash
-mlpipe --version
+mlflux --version
 ```
+*(Note: `mlpipe` is fully supported as an identical CLI alias and Python import shim!)*
 
 ---
 

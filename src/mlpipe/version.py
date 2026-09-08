@@ -1,3 +1,1 @@
-"""MLPipe version."""
-
-__version__ = "0.2.5"
+from mlflux.version import __version__  # noqa: F401

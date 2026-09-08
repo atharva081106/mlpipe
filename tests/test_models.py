@@ -1,8 +1,8 @@
 """Tests for model candidates and registry."""
 
-from mlpipe.models.classification import get_classification_candidates
-from mlpipe.models.regression import get_regression_candidates
-from mlpipe.models.selection import get_candidates_for_task
+from mlflux.models.classification import get_classification_candidates
+from mlflux.models.regression import get_regression_candidates
+from mlflux.models.selection import get_candidates_for_task
 
 
 def test_classification_candidates():

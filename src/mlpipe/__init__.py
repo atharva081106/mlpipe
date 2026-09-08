@@ -1,43 +1,8 @@
-"""
-MLPipe: Automated Machine Learning Library and Terminal CLI.
-"""
+"""Backward compatibility shim for mlpipe -> mlflux."""
+import sys
+import mlflux
+from mlflux import *  # noqa: F401, F403
+from mlflux.core.pipeline import Pipeline  # noqa: F401
+from mlflux.core.exceptions import MLFluxError as MLPipeError  # noqa: F401
 
-from mlpipe.core.config import PipelineConfig, TaskType, TrainingMode
-from mlpipe.core.exceptions import (
-    ArtifactError,
-    ConfigurationError,
-    DatasetError,
-    EvaluationError,
-    MLPipeError,
-    PipelineError,
-    PredictionError,
-    PreprocessingError,
-    TrainingError,
-    ValidationError,
-)
-from mlpipe.core.pipeline import Pipeline
-from mlpipe.core.result import PipelineResult
-from mlpipe.data.profiling import DatasetProfile
-from mlpipe.data.validation import ValidationReport
-from mlpipe.version import __version__
-
-__all__ = [
-    "Pipeline",
-    "PipelineResult",
-    "DatasetProfile",
-    "ValidationReport",
-    "PipelineConfig",
-    "TaskType",
-    "TrainingMode",
-    "MLPipeError",
-    "DatasetError",
-    "ValidationError",
-    "PreprocessingError",
-    "TrainingError",
-    "EvaluationError",
-    "ArtifactError",
-    "ConfigurationError",
-    "PredictionError",
-    "PipelineError",
-    "__version__",
-]
+sys.modules["mlpipe"] = mlflux

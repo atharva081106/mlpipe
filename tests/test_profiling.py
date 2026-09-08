@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from mlpipe.data.profiling import profile_dataset, detect_column_type
+from mlflux.data.profiling import profile_dataset, detect_column_type
 
 
 def test_profiling_types(sample_classification_df: pd.DataFrame):

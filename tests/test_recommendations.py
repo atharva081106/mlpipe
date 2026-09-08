@@ -2,7 +2,7 @@ import pytest
 import pandas as pd
 import numpy as np
 
-from mlpipe.core.recommendations import (
+from mlflux.core.recommendations import (
     recommend_target_column,
     recommend_split_strategy,
     recommend_models_for_task,

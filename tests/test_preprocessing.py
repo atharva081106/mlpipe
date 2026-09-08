@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from mlpipe.preprocessing.builder import (
+from mlflux.preprocessing.builder import (
     build_preprocessor,
     classify_columns,
     get_transformed_feature_names,

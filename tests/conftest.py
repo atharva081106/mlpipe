@@ -1,4 +1,4 @@
-"""Pytest fixtures and sample data for MLPipe tests."""
+"""Pytest fixtures and sample data for MLFlux tests."""
 
 from pathlib import Path
 import numpy as np

@@ -3,9 +3,9 @@
 import numpy as np
 import pandas as pd
 
-from mlpipe.models.classification import get_classification_candidates
-from mlpipe.preprocessing.builder import build_preprocessor, classify_columns
-from mlpipe.tuning.search import tune_candidate
+from mlflux.models.classification import get_classification_candidates
+from mlflux.preprocessing.builder import build_preprocessor, classify_columns
+from mlflux.tuning.search import tune_candidate
 
 
 def test_tune_single_candidate(sample_classification_df: pd.DataFrame):

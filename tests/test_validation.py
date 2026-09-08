@@ -3,8 +3,8 @@
 import pandas as pd
 import pytest
 
-from mlpipe.core.exceptions import ValidationError
-from mlpipe.data.validation import detect_task, validate_dataset
+from mlflux.core.exceptions import ValidationError
+from mlflux.data.validation import detect_task, validate_dataset
 
 
 def test_detect_task_classification():

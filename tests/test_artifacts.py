@@ -4,7 +4,7 @@ from pathlib import Path
 from sklearn.dummy import DummyClassifier
 from sklearn.pipeline import Pipeline
 
-from mlpipe.artifacts.manager import (
+from mlflux.artifacts.manager import (
     ArtifactManager,
     inspect_run_directory,
     load_pipeline_artifact,
